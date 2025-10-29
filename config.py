@@ -4,7 +4,7 @@ CONFIG_FILE = "config.json"
 
 DEFAULTS = {
     "device_id": "",
-    "refresh_interval": 4  # Sekunden
+    "refresh_interval": 8  # Sekunden
 }
 
 def load():

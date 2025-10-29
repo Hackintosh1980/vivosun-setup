@@ -16,7 +16,7 @@ class DashboardScreen(Screen):
         self.file_path = APP_JSON
         self.data_buffer = []
         self._cancel_evt = False
-        self.refresh_interval = float(config.get("refresh_interval", 8.0))
+        self.refresh_interval = float(config.get("refresh_interval", 4.0))
 
         self.build_ui()
         self.status_info("🌿 Starte Dashboard…")
