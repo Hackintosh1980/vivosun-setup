@@ -6,18 +6,23 @@ Kivy + Kivy Garden Graph – APK-ready, smooth curves, neon glow
 © 2025 Dominik Rosenthal (Hackintosh1980)
 """
 
-# --- Garden Graph Import Fix (lokales Modul einbinden) ---
-import os, sys, math, random, time
-from collections import deque
+# ===============================================================
+#  Garden Graph Import Fix – sichert lokale Einbindung für Buildozer
+# ===============================================================
+import os, sys
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+GARDEN_PATH = os.path.join(BASE_DIR, "garden")
+if GARDEN_PATH not in sys.path:
+    sys.path.insert(0, GARDEN_PATH)
 
-BASE_DIR = os.path.dirname(__file__)
-GARDEN_DIR = os.path.join(BASE_DIR, "garden")
-if GARDEN_DIR not in sys.path:
-    sys.path.append(GARDEN_DIR)
-
+# Garden Graph importieren
 from kivy_garden.graph import Graph, MeshLinePlot
-# ---------------------------------------------------------
 
+# ===============================================================
+#  Core-Imports für Dashboard
+# ===============================================================
+import math, random, time
+from collections import deque
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.lang import Builder
@@ -29,7 +34,18 @@ from kivy.core.window import Window
 from kivy.core.text import LabelBase
 from kivy.metrics import dp
 
-# --- optional Emoji-Font (falls vorhanden, kein Crash wenn nicht) ---
+# ===============================================================
+#  UI-Font & Fenster-Setup
+# ===============================================================
+LabelBase.register(
+    name="Emoji",
+    fn_regular="/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
+)
+Window.size = (1200, 700)
+Window.clearcolor = (0, 0, 0, 1)
+
+# (Ab hier folgt dein Builder-KV-String & App-Logik)
+# --- Emoji-Font optional registrieren (kein Crash, wenn nicht vorhanden)
 try:
     LabelBase.register(
         name="Emoji",
@@ -38,11 +54,11 @@ try:
 except Exception:
     pass
 
-# Startgröße für Desktop-Tests
+# Startgröße für Desktop
 Window.size = (1280, 740)
 
 KV = """
-#:import Graph kivy_garden.graph.Graph
+#:import Graph kivy.garden.graph.Graph
 
 <Header@BoxLayout>:
     size_hint_y: None
@@ -119,7 +135,7 @@ KV = """
             pos: self.pos
             size: self.size
             radius: [16,16,16,16]
-        # Neon-Glow (doppelter, dezenter Glow)
+        # Neon-Glow (dezentes Doppelglühen)
         Color:
             rgba: self.accent[0], self.accent[1], self.accent[2], 0.15
         RoundedRectangle:
@@ -167,13 +183,13 @@ KV = """
         tick_color: 0.35, 0.8, 0.45, 1
         label_options: {'color': (0.78, 1, 0.82, 1), 'bold': False}
         x_ticks_major: 10
-        # y_ticks_major darf float sein (wir casten intern auf int beim Zeichnen)
         y_ticks_major: (root.ymax - root.ymin) / 5 if (root.ymax - root.ymin) > 0 else 1
         precision: "1"
         size_hint_y: 1
 
 <Dashboard>:
     orientation: "vertical"
+    # dezenter bewegter Hintergrund-Glow
     canvas.before:
         Color:
             rgba: 0.02, 0.04 + (0.01 * (1 + (app._bg_phase % 1))), 0.03, 1
@@ -237,8 +253,13 @@ KV = """
 Dashboard:
 """
 
-# ---------- Smoothing (sanfte Zwischenschritte für weiche Kurven) ----------
+# -------------------------------------------------------------------
+# Helper: leichte Spline/Bezier-Interpolation für smoother Lines
 def _smooth_points(points, factor=2):
+    """
+    Nimmt [(x,y), ...] und fügt zwischenpunkte hinzu (quadratic bezier-like),
+    damit der Plot weich wirkt. factor=2 -> ~doppelte Punktzahl.
+    """
     if len(points) < 3 or factor < 2:
         return points
     out = []
@@ -246,8 +267,10 @@ def _smooth_points(points, factor=2):
         x0, y0 = points[i]
         x1, y1 = points[i + 1]
         out.append((x0, y0))
+        # einfacher Zwischenpunkt (Quadratic bezier approx)
         mx = (x0 + x1) / 2.0
         my = (y0 + y1) / 2.0
+        # zusätzliche Subdivisionen
         if factor >= 2:
             out.append((mx, (y0 + my) / 2.0))
         if factor >= 3:
@@ -255,7 +278,7 @@ def _smooth_points(points, factor=2):
     out.append(points[-1])
     return out
 
-# ------------------------------ Widgets ------------------------------
+# -------------------------------------------------------------------
 class Footer(BoxLayout):
     led_color = ListProperty([0, 1, 0, 1])
     status_text = StringProperty("🟢 Simulation aktiv")
@@ -271,7 +294,7 @@ class Tile(BoxLayout):
 class Dashboard(BoxLayout):
     pass
 
-# ------------------------------ App ------------------------------
+# -------------------------------------------------------------------
 class VivosunApp(App):
     running = BooleanProperty(True)
     header_right = StringProperty("")
@@ -280,7 +303,6 @@ class VivosunApp(App):
     def build(self):
         self.root = Builder.load_string(KV)
         self.footer = self.root.ids.footer
-
         ids = self.root.ids
         self.tiles = {
             "t_int": ids.tile_t_int,
@@ -288,10 +310,10 @@ class VivosunApp(App):
             "vpd_int": ids.tile_vpd_int,
             "t_ext": ids.tile_t_ext,
             "h_ext": ids.tile_h_ext,
-            "batt":  ids.tile_batt,
+            "batt": ids.tile_batt,
         }
 
-        # Deques (X läuft 0..n-1)
+        # Deques für effizientes Schieben
         self.buffers = {k: deque(maxlen=60) for k in self.tiles}
         self.plots = {}
         for k, t in self.tiles.items():
@@ -300,27 +322,30 @@ class VivosunApp(App):
             self.plots[k] = p
 
         self._t0 = time.time()
+        # Adaptive Ticks: schnell bei Fokus, langsamer im Hintergrund
         self._update_ev = Clock.schedule_interval(self.update_all, 0.33)
         self._led_ev = Clock.schedule_interval(self._led_breathe, 1.0)
         self._bg_ev = Clock.schedule_interval(self._bg_animate, 0.12)
         Window.bind(on_focus=self._on_focus)
         return self.root
 
+    # ----------------- Simulation & Anzeige -----------------
     def _phase(self, div): 
         return (time.time() - self._t0) / max(1e-6, div)
 
     def update_all(self, *_):
         if not self.running:
             return
-
-        # --- Synth-Werte
+        # --- Synth-Daten
         t_int = 25 + 2.3 * math.sin(self._phase(9.5)) + random.uniform(-0.22, 0.22)
         h_int = 62 + 7.4 * math.cos(self._phase(15.2)) + random.uniform(-0.8, 0.8)
-        vpd   = max(0.0, (1 - h_int/100.0) * (t_int/10.0))
+        vpd = max(0.0, (1 - h_int/100.0) * (t_int/10.0))
         t_ext = 18 + 6.4 * math.sin(self._phase(22.0)+0.6) + random.uniform(-0.28,0.28)
         h_ext = 55 + 11.5 * math.cos(self._phase(30.0)+0.8) + random.uniform(-1.0,1.0)
+
         last_b = self.buffers["batt"][-1] if self.buffers["batt"] else 88
-        batt = max(0, min(100, last_b + random.choice([-0.1, 0, 0, 0.1])))
+        drift = random.choice([-0.1, 0, 0, 0.1])
+        batt = max(0, min(100, last_b + drift))
 
         vals = {
             "t_int": (t_int, "°C", 1),
@@ -332,29 +357,31 @@ class VivosunApp(App):
         }
         for k, (v, u, p) in vals.items():
             self._push(k, v)
-            self._upd_label_and_color(k, v, u, p)
+            self._upd(k, v, u, p)
 
-        # Uhr (Sekunden fett)
+        # Header-Uhr mit sanftem Puls auf Sekunden
         sec = int(time.time()) % 60
         self.header_right = time.strftime("%H:%M:") + f"[b]{sec:02d}[/b]"
 
-        # Status-Pulse
+        # dezente Status-Pulse
         now = int(time.time())
         if now % 19 == 0:
             self._pulse_led([1, 0.85, 0.0, 1], "🟡 Daten Refresh…")
         elif now % 23 == 0:
             self._pulse_led([0, 1, 0, 1], "🟢 Simulation aktiv")
 
-    def _push(self, key, val):
-        b = self.buffers[key]
-        b.append(val)
+    def _push(self, k, v):
+        b = self.buffers[k]
+        b.append(v)
+        # X neu indizieren (0..N-1)
         pts = list(enumerate(b))
         pts = _smooth_points(pts, factor=3)
-        self.plots[key].points = pts
+        self.plots[k].points = pts
 
-    def _upd_label_and_color(self, k, v, u, p):
+    def _upd(self, k, v, u, p):
         t = self.tiles[k]
         t.value_text = f"{v:.{p}f} {u}"
+        # sanft zur Basisfarbe zurückblenden
         base = {
             "t_int": [1, 0.45, 0.45],
             "h_int": [0.35, 0.70, 1],
@@ -365,16 +392,23 @@ class VivosunApp(App):
         }[k]
         cur = t.accent
         lerp = 0.10
-        t.accent = [cur[i] + (base[i]-cur[i]) * lerp for i in range(3)]
+        t.accent = [
+            cur[0] + (base[0]-cur[0])*lerp,
+            cur[1] + (base[1]-cur[1])*lerp,
+            cur[2] + (base[2]-cur[2])*lerp,
+        ]
 
-    # Controls & FX
+    # ----------------- Controls & FX -----------------
     def toggle_sim(self):
         self.running = not self.running
-        self._pulse_led([0, 1, 0, 1] if self.running else [1, 0.35, 0.35, 1],
-                        "🟢 Simulation fortgesetzt" if self.running else "⏸️ Simulation pausiert")
+        if self.running:
+            self._pulse_led([0, 1, 0, 1], "🟢 Simulation fortgesetzt")
+        else:
+            self._pulse_led([1, 0.35, 0.35, 1], "⏸️ Simulation pausiert")
 
     def _pulse_led(self, color, text):
         self.footer.status_text = text
+        # zweistufiger Glow
         (Animation(led_color=color, duration=0.25) +
          Animation(led_color=[0, 0.55, 0, 1], duration=0.60)).start(self.footer)
 
@@ -384,11 +418,17 @@ class VivosunApp(App):
             self.footer.led_color = [0, g, 0, 1]
 
     def _bg_animate(self, *_):
+        # leichte Hintergrundverschiebung für subtilen „Alive“-Effekt
         self._bg_phase = (self._bg_phase + 0.03) % 1.0
 
     def _on_focus(self, _win, focus):
-        self._update_ev.cancel()
-        self._update_ev = Clock.schedule_interval(self.update_all, 0.33 if focus else 0.75)
+        # adaptive Tickrate spart CPU
+        if focus:
+            self._update_ev.cancel()
+            self._update_ev = Clock.schedule_interval(self.update_all, 0.33)
+        else:
+            self._update_ev.cancel()
+            self._update_ev = Clock.schedule_interval(self.update_all, 0.75)
 
 # -------------------------------------------------------------------
 if __name__ == "__main__":

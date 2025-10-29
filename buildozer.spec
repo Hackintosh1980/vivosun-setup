@@ -1,9 +1,10 @@
 [app]
-title = VIVOSUN Reader
-package.name = vivosunreader
+title = VIVOSUN Dummy
+package.name = dummyreader
 package.domain = org.hackintosh1980
-source.dir = .
-source.include_exts = py,png,jpg,kv,json,ttf
+
+source.include_exts = py,kv,png,jpg,json,ttf
+include_patterns = garden/**/*
 
 version = 1.1
 package.version = 1
@@ -14,34 +15,29 @@ presplash.filename = Logo.png
 orientation = landscape
 fullscreen = 1
 
-requirements = python3,kivy,pyjnius,pillow,certifi,six,bleak
 
-# Java-Source ins APK einbinden
+
+requirements = python3,kivy,pyjnius,pillow,certifi,six
+source.dir = .
+source.include_dirs = garden
+garden_requirements =
+# KEIN garden_requirements verwenden
+
+
+
 android.add_src = src/main/java
 
-
-# Android permissions
-# -------------------------------------------------
 android.permissions = BLUETOOTH, BLUETOOTH_ADMIN, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, ACCESS_BACKGROUND_LOCATION, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
 
-# -------------------------------------------------
-# Build-Targets
-# -------------------------------------------------
 android.api = 33
 android.minapi = 29
 android.ndk_api = 29
 android.debug = True
 android.archs = arm64-v8a
 
-# -------------------------------------------------
-# SDK/NDK Paths (lokal)
-# -------------------------------------------------
 android.sdk_path = /home/domi/.buildozer/android/platform/android-sdk
 android.ndk_path = /home/domi/.buildozer/android/platform/android-ndk-r28c
 
-# -------------------------------------------------
-# Gradle / p4a Settings
-# -------------------------------------------------
 p4a.source_dir = ~/python-for-android
 p4a.build_threads = 6
 p4a.extra_args = --allow-minsdk-ndkapi-mismatch
