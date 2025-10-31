@@ -1,0 +1,59 @@
+# 🌱 VIVOSUN Thermo Dashboard – Internal Development Blueprint
+
+**Version:** 2025-10-29  
+**Author:** Dominik Rosenthal (Hackintosh1980)  
+**Scope:** Multi-platform Open BLE Dashboard Ecosystem  
+**Core Technologies:** Kivy, Kivy-Garden Graph, PyJNIUS (Java Bridge), Buildozer/p4a, Bleak  
+**Target Platforms:** Android, Linux, macOS, Windows
+
+---
+
+## 1. Gesamtidee
+
+Das Projekt „VIVOSUN Thermo Dashboard“ dient als **offene, serverunabhängige Monitoring-Plattform** für BLE-basierte Sensorik (VIVOSUN THB-1S u.a.).  
+Die App basiert auf **lokaler Airdump-Technologie** (direktes passives BLE-Parsing, kein Pairing oder Cloud-Traffic)  
+und kann vollständig offline betrieben werden.  
+
+> 💡 Ziel ist die Freiheit, ausgelesene Sensordaten ohne Hersteller-Server, API-Limitierung oder Abhängigkeit auszuwerten.
+
+---
+
+## 2. Systemarchitektur
+
+### 2.1 Komponentenübersicht
+
+| Modul | Beschreibung | Sprache / Layer |
+|-------|---------------|----------------|
+| **Dashboard GUI** | Haupt-Interface mit 6 Tiles (Temp/Hum/VPD in/out + Signal) | Kivy (.kv + Python) |
+| **Dashboard Charts** | Kivy-Garden Graph Layer, optimiert für Neon-Curves & Real-Time-Redraw | Python (kivy_garden.graph) |
+| **Async BLE Reader** | Hintergrund-Thread zum passiven Scannen + Parsing von ThermoBeacon2-Paketen | Python (asyncio / bleak) |
+| **BLE Bridge (Android)** | Java-Class via PyJNIUS für natives Scanning (runnable unter API29–33) | Java / JNI |
+| **Setup GUI** | Geräteauswahl, Reset, Bridge-Test, Log-View | Kivy Sub-Screen |
+| **Config Manager** | Speicherung von Offsets, Device-ID, zuletzt verbundenem Sensor | JSON-/CSV-based |
+| **Status Controller** | Heartbeat, LED-Status, Bridge Polling-Indikator | Python background logic |
+
+---
+
+## 3. Datenfluss & Ablauf
+
+```text
+┌────────────┐
+│ BLE Beacon │  (Airdump Mode)
+└─────┬──────┘
+      │
+      ▼
+┌──────────────┐
+│ Java BLEBridge│ – decodes manufacturer data (0x0019)
+│ → writes ble_scan.json │
+└─────┬────────┘
+      ▼
+┌──────────────┐
+│ async_reader │
+│ parses JSON  │
+│ updates live buffers │
+└─────┬────────┘
+      ▼
+┌──────────────┐
+│ Dashboard GUI│
+│ plots + text │
+└──────────────┘

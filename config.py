@@ -1,46 +1,57 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+config.py – zentrale JSON-Konfiguration für VIVOSUN Ultimate
+© 2025 Dominik Rosenthal (Hackintosh1980)
+"""
 import json, os
+from kivy.utils import platform
 
-CONFIG_FILE = "config.json"
+if platform == "android":
+    APP_DIR = "/data/user/0/org.hackintosh1980.dashboard/files"
+else:
+    APP_DIR = os.path.abspath(os.path.dirname(__file__))
+
+CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 
 DEFAULTS = {
-    "device_id": "",
-    "refresh_interval": 8  # Sekunden
+    "device_id": None,
+    "mode": "simulation",          # oder 'live'
+    "refresh_interval": 4.0,       # Sekunden zwischen Polls
+    "poll_jitter": 0.3,            # Zufalls-Offset (optional)
+    "chart_window": 120,           # Punkte im Chart
+    "ui_scale": 0.85,              # Globales Scaling
+    "unit": "°C",                  # °C oder °F
+    "leaf_offset": 0.0,            # °C Offset für Leaf Temp
+    "vpd_offset": 0.0,             # Korrektur für VPD
+    "theme": "Dark",               # Theme-Auswahl
+    "clear_on_mode_switch": True,  # Charts leeren bei Moduswechsel
 }
 
-def load():
-    if not os.path.exists(CONFIG_FILE):
-        return DEFAULTS.copy()
+def load_config():
     try:
-        with open(CONFIG_FILE, "r") as f:
-            data = json.load(f)
-        merged = DEFAULTS.copy()
-        merged.update(data or {})
-        return merged
-    except Exception:
-        return DEFAULTS.copy()
-
-def save(data: dict):
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+                return {**DEFAULTS, **data}
     except Exception as e:
-        print("⚠️ Config speichern fehlgeschlagen:", e)
+        print("⚠️ Fehler beim Laden der config:", e)
+    return DEFAULTS.copy()
 
-def get(key, default=None):
-    data = load()
-    return data.get(key, DEFAULTS.get(key, default))
+def save_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+        print("💾 Config gespeichert:", cfg)
+    except Exception as e:
+        print("❌ Fehler beim Speichern:", e)
 
-def save_device_id(dev_id: str):
-    data = load()
-    data["device_id"] = dev_id
-    save(data)
-    return data
+def save_device_id(device_id):
+    cfg = load_config()
+    cfg["device_id"] = device_id
+    cfg["mode"] = "live"
+    save_config(cfg)
 
-def get_refresh_interval() -> int:
-    return int(get("refresh_interval", DEFAULTS["refresh_interval"]))
-
-def set_refresh_interval(seconds: int):
-    data = load()
-    data["refresh_interval"] = int(max(1, seconds))
-    save(data)
-    return data
+def get_device_id():
+    return load_config().get("device_id")
