@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ChartManager – Live + Simulation + Auto-Scaling aggressiv
+ChartManager – Live-Only Version (keine Simulation)
 © 2025 Dominik Rosenthal (Hackintosh1980)
 """
 
-import os, random, json
+import os, json
 from kivy.clock import Clock
-from kivy_garden.graph import MeshLinePlot, LinePlot
+from kivy_garden.graph import LinePlot
 from kivy.utils import platform
 import config, utils
+import os, json
 
-APP_JSON = "/data/user/0/org.hackintosh1980.dashboard/files/ble_scan.json"
+if platform == "android":
+    APP_JSON = "/data/user/0/org.hackintosh1980.dashboard/files/ble_scan.json"
+else:
+    APP_JSON = os.path.join(os.path.dirname(__file__), "ble_scan.json")
+
+print(f"🗂️ Verwende APP_JSON = {APP_JSON}")
 
 
 class ChartManager:
@@ -24,10 +30,9 @@ class ChartManager:
 
         # --- Config ---
         self.cfg = config.load_config()
-        self.mode = self.cfg.get("mode", "simulation")
         self.refresh_interval = float(self.cfg.get("refresh_interval", 4.0))
         self.chart_window = int(self.cfg.get("chart_window", 120))
-        print(f"🌿 ChartManager init – Modus={self.mode}, Poll={self.refresh_interval}s")
+        print(f"🌿 ChartManager init – Live-Modus, Poll={self.refresh_interval}s")
 
         # --- Graphs vorbereiten ---
         for key in [
@@ -44,82 +49,21 @@ class ChartManager:
             graph.add_plot(plot)
             self.plots[key] = plot
             self.buffers[key] = []
-            # Mindestwerte verhindern ZeroDivisionError
+
+            # Mindestwerte gegen ZeroDivisionError
             if graph.ymax == graph.ymin:
                 graph.ymin = 0
                 graph.ymax = 1
 
-
         # --- Start ---
-        cfg_mode = (self.mode or "").strip().lower()
-        print(f"🔍 Starte Initialisierung – erkannter Modus: {cfg_mode}, Plattform: {platform}")
-
-        # Nur starten, wenn Modus eindeutig gesetzt ist
-        if cfg_mode == "simulation" and platform != "android":
-                print("🧪 Desktop erkannt – starte Simulation.")
-                self.start_simulation()
-        elif cfg_mode == "live" and platform == "android":
-                print("📡 Android erkannt – starte Live-Polling.")
-                self.start_live_poll()
-        else:
-                print("⏸ Kein gültiger Modus – keine Simulation, kein Poll aktiv.")
-                self.running = False
-
-
-# ----------------------------------------------------------
-    # 🔁 SIMULATION
-    # ----------------------------------------------------------
-    def _simulate_values(self, *a):
-        if not self.running:
-            return
-        self.counter += 1
-        vals = {}
-        for key in self.plots.keys():
-            if "t_in" in key:
-                vals[key] = 24 + random.uniform(-1, 1)
-            elif "t_out" in key:
-                vals[key] = 18 + random.uniform(-2, 2)
-            elif "h_in" in key or "h_out" in key:
-                vals[key] = 60 + random.uniform(-10, 10)
-            elif "vpd" in key:
-                vals[key] = random.uniform(0.8, 1.6)
-        for key, val in vals.items():
-            self._append_value(key, val)
-
-        # GUI aktualisieren
-        try:
-            self.dashboard.ids.tile_t_in.ids.big.text = f"{vals['tile_t_in']:.1f}"
-            self.dashboard.ids.tile_h_in.ids.big.text = f"{vals['tile_h_in']:.1f}"
-            self.dashboard.ids.tile_vpd_in.ids.big.text = f"{vals['tile_vpd_in']:.2f}"
-        except Exception:
-            pass
-
-    def start_simulation(self):
-        """Startet Dummy-Simulation (nur Desktop)."""
-        try:
-            # Erst alles stoppen
-            self.stop_simulation()
-            self.running = True
-
-            # Event nur EINMAL planen
-            self._sim_event = Clock.schedule_interval(self._simulate_values, 2.0)
-            print("🧪 Simulation gestartet (Loop aktiv).")
-
-        except Exception as e:
-            print("⚠️ start_simulation Fehler:", e)
+        print(f"📡 Starte Live-Polling (Plattform: {platform})")
+        self.start_live_poll()
     # ----------------------------------------------------------
     # 📡 LIVE POLLING
     # ----------------------------------------------------------
     def start_live_poll(self):
-        """Starte Polling für echte Bridge-Daten."""
-        # Simulation darf hier nicht aktiv sein
-        self.stop_simulation()
+        """Starte Polling für echte Bridge-Daten (Android)."""
         self.running = True
-
-        if platform != "android":
-            print("⚠️ Live Poll deaktiviert – kein Android.")
-            return
-
         print("📡 Starte Live-Polling …")
         self._poll_event = Clock.schedule_interval(self._poll_json, self.refresh_interval)
 
@@ -129,13 +73,15 @@ class ChartManager:
             return
         try:
             if not os.path.exists(APP_JSON):
-                print("⚠️ Keine JSON-Datei gefunden:", APP_JSON)
+                print(f"⚠️ JSON fehlt: {APP_JSON}")
+                self._set_no_data_labels()
                 return
 
             with open(APP_JSON, "r") as f:
                 data = json.load(f)
-            if not data:
-                print("⚠️ JSON leer.")
+            if not data or not isinstance(data, list):
+                print("⚠️ JSON leer oder ungültig.")
+                self._set_no_data_labels()
                 return
 
             d = data[0]
@@ -167,10 +113,10 @@ class ChartManager:
 
         except Exception as e:
             print("⚠️ Polling-Fehler:", e)
-
+            self._set_no_data_labels()
 
     # ----------------------------------------------------------
-    # 🧩 Gemeinsame
+    # 🧩 Hilfsfunktionen
     # ----------------------------------------------------------
     def _append_value(self, key, val):
         buf = self.buffers[key]
@@ -192,17 +138,15 @@ class ChartManager:
             y_min = min(vals)
             y_max = max(vals)
 
-            # 👉 Schutz gegen flache oder konstante Kurven
+            # Schutz gegen flache Kurven
             if abs(y_max - y_min) < 1e-6:
                 y_max = y_min + 0.5
                 y_min = y_min - 0.5
 
-            # Dynamische Margin für „atmende“ Kurve
             margin = max((y_max - y_min) * 0.2, 0.2)
             graph.ymin = round(y_min - margin, 1)
             graph.ymax = round(y_max + margin, 1)
 
-            # 👉 X-Achse sauber verschieben ohne Sprung
             if self.counter >= self.chart_window:
                 graph.xmin = self.counter - self.chart_window
                 graph.xmax = self.counter
@@ -213,18 +157,24 @@ class ChartManager:
         except Exception as e:
             print(f"⚠️ Auto-Scale-Fehler ({key}):", e)
 
-
+    def _set_no_data_labels(self):
+        """Zeigt '--' an, wenn keine Echtwerte verfügbar."""
+        for key in [
+            "tile_t_in", "tile_h_in", "tile_vpd_in",
+            "tile_t_out", "tile_h_out", "tile_vpd_out"
+        ]:
+            tile = self.dashboard.ids.get(key)
+            if tile:
+                tile.ids.big.text = "--"
 
     # ----------------------------------------------------------
     # 🧹 Reset / Stop / Config
     # ----------------------------------------------------------
-    def stop_simulation(self):
-        if hasattr(self, "_sim_event"):
-            Clock.unschedule(self._sim_event)
+    def stop_polling(self):
         if hasattr(self, "_poll_event"):
             Clock.unschedule(self._poll_event)
         self.running = False
-        print("⏹ Loop gestoppt.")
+        print("⏹ Polling gestoppt.")
 
     def reset_data(self):
         for key, buf in self.buffers.items():

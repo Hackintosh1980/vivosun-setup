@@ -41,9 +41,9 @@ class SettingsScreen(Screen):
         # ---------------- Mode ----------------
         root.add_widget(Label(text="Betriebsmodus:", size_hint_y=None, height="28dp"))
         self.mode_spinner = Spinner(
-            text=cfg.get("mode", "simulation"),
-            values=["simulation", "live"],
-            size_hint_y=None, height="38dp"
+                text=cfg.get("mode", "live"),
+                values=["live"],
+                size_hint_y=None, height="38dp"
         )
         root.add_widget(self.mode_spinner)
 

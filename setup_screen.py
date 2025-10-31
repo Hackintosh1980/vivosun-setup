@@ -105,10 +105,14 @@ class SetupScreen(Screen):
         self.add_widget(root)
 
     # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # BLE-Bridge starten
+    # ---------------------------------------------------------
+    # ---------------------------------------------------------
     # BLE-Bridge starten
     # ---------------------------------------------------------
     def start_bridge_once(self, *args):
-        """Startet BleBridgePersistent nur einmal."""
+        """Startet BleBridgePersistent (Android) oder nativen BlueZ-Scan (Desktop)."""
         if self._bridge_started or self._cancel_evt:
             return
         self._bridge_started = True
@@ -120,14 +124,27 @@ class SetupScreen(Screen):
                 print("BleBridgePersistent.start() →", ret)
                 self.status.text = "[color=#00ffaa]🌿 Bridge aktiv – Scan läuft dauerhaft[/color]"
             else:
-                self.status.text = "[color=#ffaa00]⚠️ BLE nur auf Android aktiv[/color]"
+                print("💻 Desktop erkannt – starte nativen BlueZ-Scan via Bleak")
+                script_path = os.path.join(os.path.dirname(__file__), "ble_scan_linux.py")
+                if not os.path.exists(script_path):
+                    self.status.text = f"[color=#ff8888]❌ ble_scan_linux.py fehlt:[/color] {script_path}"
+                    return
+
+                try:
+                    import subprocess
+                    # Starte den nativen BlueZ/Bleak-Scan (schreibt ble_scan.json)
+                    subprocess.Popen(["python3", script_path])
+                    self.status.text = "[color=#00ffaa]🌿 BlueZ-Scan gestartet – suche Geräte...[/color]"
+                except Exception as err:
+                    print("⚠️ BlueZ-Scan-Fehler:", err)
+                    self.status.text = f"[color=#ff5555]❌ Startfehler:[/color] {err}"
+
             # Erstes Laden & regelmäßiger Reload
             Clock.schedule_once(self.load_device_list, 3)
             Clock.schedule_interval(self.load_device_list, 10)
         except Exception as e:
             self.status.text = f"[color=#ff5555]❌ Bridge-Startfehler:[/color] {e}"
 
-    # ---------------------------------------------------------
     # JSON lesen + Liste erzeugen
     # ---------------------------------------------------------
     def load_device_list(self, *args):

@@ -155,7 +155,7 @@ KV = f"""
     Header:
         id: header
         led_color: 0,1,0,1
-        status_text: "🟢 Simulation aktiv"
+        status_text: "📡 Live-Polling aktiv"
 
     GridLayout:
         id: grid
@@ -242,7 +242,7 @@ Dashboard:
 # -------------------------------------------------------
 class Header(BoxLayout):
     led_color = ListProperty([0, 1, 0, 1])
-    status_text = StringProperty("🟢 Simulation aktiv")
+    status_text = StringProperty("📡 Live-Polling aktiv")
 
 class Tile(BoxLayout):
     title = StringProperty("Title")

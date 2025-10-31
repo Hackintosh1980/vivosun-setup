@@ -17,7 +17,7 @@ import time
 
 # --- Projektmodule ---
 from dashboard_gui import create_dashboard
-from dashboard_charts import ChartManager
+from dashboard_charts import ChartManager, APP_JSON
 from setup_screen import SetupScreen
 from settings_screen import SettingsScreen
 import config
@@ -63,7 +63,9 @@ class VivosunApp(App):
 
         # --- Chart Manager (nur im Dashboard wirksam)
         self.chart_mgr = ChartManager(dash.children[0])
-
+        print(f"🖥️ Plattform: {platform}")
+        print(f"📄 JSON-Pfad (APP_JSON): {APP_JSON}")
+        print(f"⚙️ ChartManager running={getattr(self.chart_mgr, 'running', None)}")
         # --- Android: Falls Config vorhanden & Mode=live → Bridge starten
         if platform == "android":
             try:
@@ -149,7 +151,7 @@ class VivosunApp(App):
         self.sm.current = "setup"
 
     def on_stop_pressed(self, button=None):
-        """Start/Stop-Umschaltung für Simulation oder Live-Loop."""
+        """Start/Stop-Umschaltung für Live-Polling."""
         if not hasattr(self, "chart_mgr"):
             return
 
@@ -159,7 +161,7 @@ class VivosunApp(App):
         if platform == "android":
             try:
                 cfg = config.load_config()
-                if cfg.get("mode") == "live":
+                if cfg.get("mode") == "live" and cfg.get("device_id"):
                     from jnius import autoclass
                     PythonActivity = autoclass("org.kivy.android.PythonActivity")
                     ctx = PythonActivity.mActivity
@@ -168,17 +170,18 @@ class VivosunApp(App):
                     print(f"📡 Bridge auto-start → {ret}")
             except Exception as e:
                 print(f"⚠️ Bridge auto-start failed: {e}")
-
         if running:
-            print("⏹ Simulation gestoppt")
-            self.chart_mgr.stop_simulation()
+            print("⏹ Live-Polling gestoppt")
+            if hasattr(self.chart_mgr, "stop_polling"):
+                self.chart_mgr.stop_polling()
             self.chart_mgr.running = False
             if button:
                 button.text = "▶️ Start"
                 button.background_color = (0.2, 0.6, 0.2, 1)
         else:
-            print("▶️ Simulation gestartet")
-            self.chart_mgr.start_simulation()
+            print("▶️ Live-Polling gestartet")
+            if hasattr(self.chart_mgr, "start_live_poll"):
+                self.chart_mgr.start_live_poll()
             self.chart_mgr.running = True
             if button:
                 button.text = "⏹ Stop"
