@@ -28,6 +28,20 @@ class ChartManager:
         self.counter = 0
         self.running = True
 
+        # --- Alte JSON löschen (egal wo sie liegt) ---
+        try:
+            paths = [
+                APP_JSON,
+                os.path.join(os.path.expanduser("~"), "ble_scan.json"),
+                "/sdcard/Android/data/org.hackintosh1980.dashboard/files/ble_scan.json",
+            ]
+            for p in paths:
+                if os.path.exists(p):
+                    open(p, "w").write("[]")
+                    print(f"🧹 Alte Daten gelöscht: {p}")
+        except Exception as e:
+            print("⚠️ JSON-Cleanup-Fehler:", e)
+
         # --- Config ---
         self.cfg = config.load_config()
         self.refresh_interval = float(self.cfg.get("refresh_interval", 4.0))
@@ -58,14 +72,29 @@ class ChartManager:
         # --- Start ---
         print(f"📡 Starte Live-Polling (Plattform: {platform})")
         self.start_live_poll()
+    
     # ----------------------------------------------------------
     # 📡 LIVE POLLING
     # ----------------------------------------------------------
     def start_live_poll(self):
-        """Starte Polling für echte Bridge-Daten (Android)."""
+        """Starte Polling für echte Bridge-Daten."""
+        # Wenn Simulation vorhanden: stoppen, sonst ignorieren
+        if hasattr(self, "stop_simulation"):
+            self.stop_simulation()
         self.running = True
+
+        # ⚙️ Buffer komplett zurücksetzen bei jedem neuen Start
+        if hasattr(self, "reset_data"):
+            self.reset_data()
+
+        if platform != "android":
+            print("⚠️ Live Poll deaktiviert – kein Android.")
+            return
+
         print("📡 Starte Live-Polling …")
-        self._poll_event = Clock.schedule_interval(self._poll_json, self.refresh_interval)
+        self._poll_event = Clock.schedule_interval(
+            self._poll_json, self.refresh_interval
+        )
 
     def _poll_json(self, *a):
         """Liest Echtwerte aus der BleBridge JSON."""
@@ -77,8 +106,18 @@ class ChartManager:
                 self._set_no_data_labels()
                 return
 
+            # --- Robust lesen: leere / teilweise geschriebene Datei abfangen ---
             with open(APP_JSON, "r") as f:
-                data = json.load(f)
+                content = f.read().strip()
+                if not content:
+                    print("⚠️ JSON aktuell leer (Schreibvorgang läuft).")
+                    return
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError:
+                    print("⚠️ JSON noch unvollständig – nächster Poll …")
+                    return
+
             if not data or not isinstance(data, list):
                 print("⚠️ JSON leer oder ungültig.")
                 self._set_no_data_labels()
@@ -111,12 +150,26 @@ class ChartManager:
                     tile.ids.big.text = f"{val:.2f}"
                     self._auto_scale_y(tile.ids.g, key)
 
+            # ----------------------------------------------------------
+            # 🌿 Scatter-Fenster live aktualisieren, falls offen
+            # ----------------------------------------------------------
+            from kivy.app import App
+            app = App.get_running_app()
+            if hasattr(app, "scatter_window") and app.scatter_window:
+                from kivy.clock import Clock
+                Clock.schedule_once(
+                    lambda dt: app.scatter_window.update_values(
+                        t_int, h_int, t_ext, h_ext
+                    )
+                )
+
         except Exception as e:
             print("⚠️ Polling-Fehler:", e)
             self._set_no_data_labels()
 
-    # ----------------------------------------------------------
-    # 🧩 Hilfsfunktionen
+
+
+
     # ----------------------------------------------------------
     def _append_value(self, key, val):
         buf = self.buffers[key]

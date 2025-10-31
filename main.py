@@ -19,6 +19,9 @@ import time
 from dashboard_gui import create_dashboard
 from dashboard_charts import ChartManager, APP_JSON
 from setup_screen import SetupScreen
+from kivy.uix.modalview import ModalView
+from vpd_scatter_window_full import VPDScatterWindow
+from permission_fix import check_permissions
 from settings_screen import SettingsScreen
 import config
 
@@ -36,7 +39,8 @@ class VivosunApp(App):
     
     def build(self):
         print("🌱 Starte VivosunApp …")
-
+        print("🔍 Starte Berechtigungs- und Bluetooth-Check …")
+        check_permissions()
         # --- Config prüfen ---
         cfg = config.load_config()
 
@@ -89,7 +93,7 @@ class VivosunApp(App):
 
         return self.sm
 
-    # -------------------------------------------------------
+# -------------------------------------------------------
     # Android: Layout-Refresh & Permission-Check
     # -------------------------------------------------------
     def _android_post_init(self, *_):
@@ -98,9 +102,15 @@ class VivosunApp(App):
             print("📱 Android-PostInit gestartet …")
 
             # Layout-Refresh (behebt zu kleine Fenster beim ersten Start)
-            root = self.sm.get_screen("dashboard").children[0]
-            root.do_layout()
+            dash = self.sm.get_screen("dashboard").children[0]
+            dash.do_layout()
             print("✅ Layout-Refresh abgeschlossen")
+
+            # 👇 Zusätzlicher Refresh-Timer (fix bei Neustart / Resume)
+            from kivy.clock import Clock
+            Clock.schedule_once(lambda *_: dash.do_layout(), 0.5)
+            Clock.schedule_once(lambda *_: dash.do_layout(), 1.0)
+            print("🔁 Zweifacher Layout-Refresh geplant")
 
             # Runtime-Permissions prüfen
             from jnius import autoclass
@@ -108,13 +118,13 @@ class VivosunApp(App):
             activity = PythonActivity.mActivity
             ContextCompat = autoclass("androidx.core.content.ContextCompat")
             ActivityCompat = autoclass("androidx.core.app.ActivityCompat")
-            Manifest = autoclass("android.Manifest")
 
+            # Manifest-Strings direkt (Fix für jnius)
             permissions = [
-                Manifest.permission.BLUETOOTH,
-                Manifest.permission.BLUETOOTH_ADMIN,
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
+                "android.permission.BLUETOOTH",
+                "android.permission.BLUETOOTH_ADMIN",
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION",
             ]
 
             for p in permissions:
@@ -127,6 +137,7 @@ class VivosunApp(App):
 
         except Exception as e:
             print("⚠️ Android-Init-Fehler:", e)
+
 
     # -------------------------------------------------------
     # Clock / Header
@@ -144,7 +155,13 @@ class VivosunApp(App):
     # Button Actions
     # -------------------------------------------------------
     def on_scatter_pressed(self):
-        print("🟢 Scatter-VPD geöffnet (später eigenes Fenster)")
+        """Öffnet das Scatter-Fenster als modales Overlay."""
+        from kivy.uix.modalview import ModalView
+        from vpd_scatter_window_full import VPDScatterWindow
+
+        popup = ModalView(size_hint=(1, 1), auto_dismiss=False)
+        popup.add_widget(VPDScatterWindow())
+        popup.open()
 
     def on_setup_pressed(self):
         print("⚙️ Wechsel zum Setup-Screen …")
