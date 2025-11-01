@@ -41,13 +41,20 @@ except ModuleNotFoundError:
 if platform == "android":
     APP_JSON = "/data/user/0/org.hackintosh1980.dashboard/files/ble_scan.json"
 else:
-    APP_JSON = os.path.join(os.path.dirname(__file__), "ble_scan.json")
+    # Desktop: lies direkt aus der Java-Bridge-Ausgabe
+    APP_JSON = os.path.join(
+        os.path.dirname(__file__),
+        "blebridge_desktop",
+        "ble_scan.json"
+    )
+    print(f"🗂️ Verwende APP_JSON = {APP_JSON}")
 
 
 class SetupScreen(Screen):
     """
-    Geräte-Setup – startet dauerhafte BleBridgePersistent,
-    listet gefundene Geräte, speichert Auswahl in config.json.
+    Geräte-Setup – startet dauerhafte BleBridgePersistent
+    oder Desktop-Bridge (Java-Version),
+    listet gefundene Geräte und speichert Auswahl in config.json.
     """
 
     # ---------------------------------------------------------
@@ -142,38 +149,54 @@ class SetupScreen(Screen):
     # BLE-Bridge starten
     # ---------------------------------------------------------
     def start_bridge_once(self, *args):
-        """Startet BleBridgePersistent (Android) oder nativen BlueZ-Scan (Desktop)."""
+        """Startet BleBridgePersistent (Android) oder Desktop-BLE-Bridge (Java-Version)."""
         if self._bridge_started or self._cancel_evt:
             return
         self._bridge_started = True
+
         try:
-            if autoclass and platform == "android":
+            if platform == "android" and autoclass:
+                # --- 📱 Android Bridge ---
                 ctx = autoclass("org.kivy.android.PythonActivity").mActivity
                 BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
                 ret = BleBridgePersistent.start(ctx, "ble_scan.json")
-                print("BleBridgePersistent.start() →", ret)
-                self.status.text = "[color=#00ffaa]🌿 Bridge aktiv – Scan läuft dauerhaft[/color]"
+                print("📡 BleBridgePersistent.start() →", ret)
+                self.status.text = "[color=#00ffaa]🌿 Android-Bridge aktiv (dauerhafter Scan)[/color]"
+
             else:
-                print("💻 Desktop erkannt – starte nativen BlueZ-Scan via Bleak")
-                script_path = os.path.join(os.path.dirname(__file__), "ble_scan_linux.py")
-                if not os.path.exists(script_path):
-                    self.status.text = f"[color=#ff8888]❌ ble_scan_linux.py fehlt:[/color] {script_path}"
+                # --- 💻 Desktop Bridge (Java über BlueZ/TinyB) ---
+                import subprocess
+
+                # Verzeichnis & Datei-Pfade
+                bridge_dir = os.path.join(os.path.dirname(__file__), "blebridge_desktop")
+                java_file = os.path.join(bridge_dir, "BleBridgeDesktop.java")
+                class_file = os.path.join(bridge_dir, "BleBridgeDesktop.class")
+                json_target = os.path.join(bridge_dir, "ble_scan.json")
+
+                if not os.path.exists(bridge_dir):
+                    self.status.text = "[color=#ff5555]❌ Desktop-Bridge-Verzeichnis fehlt[/color]"
+                    print(f"⚠️ Bridge-Verzeichnis nicht gefunden: {bridge_dir}")
                     return
 
-                try:
-                    import subprocess
-                    # Starte den nativen BlueZ/Bleak-Scan (schreibt ble_scan.json)
-                    subprocess.Popen(["python3", script_path])
-                    self.status.text = "[color=#00ffaa]🌿 BlueZ-Scan gestartet – suche Geräte...[/color]"
-                except Exception as err:
-                    print("⚠️ BlueZ-Scan-Fehler:", err)
-                    self.status.text = f"[color=#ff5555]❌ Startfehler:[/color] {err}"
+                # Kompilieren falls notwendig
+                if not os.path.exists(class_file):
+                    print("🛠️ Kompiliere BleBridgeDesktop.java …")
+                    subprocess.run(["javac", java_file], cwd=bridge_dir, check=True)
 
-            # Erstes Laden & regelmäßiger Reload
+                # Starten
+                print("🚀 Starte BleBridgeDesktop …")
+                subprocess.Popen(["java", "BleBridgeDesktop"], cwd=bridge_dir)
+
+                self.status.text = f"[color=#00ffaa]🌿 Desktop-BLE aktiv:[/color] {json_target}"
+                print(f"💾 JSON-Ziel: {json_target}")
+
+            # --- Nach dem Start Geräte regelmäßig laden ---
             Clock.schedule_once(self.load_device_list, 3)
             Clock.schedule_interval(self.load_device_list, 10)
+
         except Exception as e:
-            self.status.text = f"[color=#ff5555]❌ Bridge-Startfehler:[/color] {e}"
+            print("⚠️ Fehler beim Start der Bridge:", e)
+            self.status.text = f"[color=#ff5555]❌ Startfehler:[/color] {e}"
 
     # JSON lesen + Liste erzeugen
     # ---------------------------------------------------------
@@ -202,8 +225,10 @@ class SetupScreen(Screen):
                 if not addr:
                     continue
                 lname = name.lower()
-                if any(x in lname for x in ["thermo", "vivosun", "beacon"]):
+                if any(x in lname for x in ["thermo", "vivosun", "beacon", "unknown", "ble"]):
                     devices[addr] = name or "ThermoBeacon"
+                else:
+                    devices[addr] = name or "Unbekanntes Gerät"
 
             if not devices:
                 self.status.text = "[color=#ffaa00]Noch keine passenden Geräte...[/color]"

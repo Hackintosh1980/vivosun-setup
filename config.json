@@ -1,6 +1,6 @@
 {
-  "device_id": null,
-  "mode": "simulation",
+  "device_id": "D4:F9:8D:2B:AE:CE",
+  "mode": "live",
   "refresh_interval": 4.0,
   "poll_jitter": 0.3,
   "chart_window": 120,
