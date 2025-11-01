@@ -17,7 +17,7 @@ from kivy.uix.image import Image
 from kivy_garden.graph import Graph
 from kivy.graphics import Color, Ellipse, Rectangle
 from kivy.core.text import LabelBase
-
+from kivy.metrics import dp
 # ---------------------------------------------------
 # Font Awesome Solid (für Icons) registrieren
 # ---------------------------------------------------
