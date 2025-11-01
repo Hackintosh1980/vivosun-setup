@@ -169,7 +169,7 @@ KV = f"""
 
         Tile:
             id: tile_t_in
-            title: "[font=assets/fonts/fa-solid-900.ttf]\uf2c9[/font]  Temp In"
+            title: "[font=assets/fonts/fa-solid-900.ttf]\uf2db[/font]  Temp In"
             ymin: 10
             ymax: 40
             accent: 1, 0.45, 0.45
@@ -190,7 +190,7 @@ KV = f"""
 
         Tile:
             id: tile_t_out
-            title: "[font=assets/fonts/fa-solid-900.ttf]\uf2c9[/font]  Temp Out"
+            title: "[font=assets/fonts/fa-solid-900.ttf]\uf2db[/font]  Temp Out"
             ymin: -5
             ymax: 45
             accent: 1.0, 0.70, 0.35
@@ -208,6 +208,7 @@ KV = f"""
             ymin: 0
             ymax: 2.0
             accent: 0.60, 1.0, 0.60
+
     BoxLayout:
         id: controlbar
         size_hint_y: None
@@ -216,38 +217,31 @@ KV = f"""
         padding: {dp_scaled(8)}
 
         Button:
-            markup: True
-            text: "[font=assets/fonts/fa-solid-900.ttf]\uf06c[/font]  Scatter"
+            text: "🌿 Scatter"
             font_size: "{sp_scaled(16)}"
             background_normal: ""
             background_color: 0.2, 0.5, 0.3, 1
             on_release: app.on_scatter_pressed()
-
         Button:
-            markup: True
-            text: "[font=assets/fonts/fa-solid-900.ttf]\uf013[/font]  Setup"
+            text: "⚙️ Setup"
             font_size: "{sp_scaled(16)}"
             background_normal: ""
             background_color: 0.3, 0.4, 0.5, 1
             on_release: app.on_setup_pressed()
-
         Button:
             id: btn_startstop
-            markup: True
-            text: "[font=assets/fonts/fa-solid-900.ttf]\uf04d[/font]  Stop"
+            text: "⏹ Stop"
             font_size: "{sp_scaled(16)}"
             background_normal: ""
             background_color: 0.6, 0.2, 0.2, 1
             on_release: app.on_stop_pressed(self)
 
         Button:
-            markup: True
-            text: "[font=assets/fonts/fa-solid-900.ttf]\uf021[/font]  Reset"
+            text: "🔄 Reset"
             font_size: "{sp_scaled(16)}"
             background_normal: ""
             background_color: 0.25, 0.45, 0.25, 1
             on_release: app.on_reset_pressed()
-
 Dashboard:
 """
 

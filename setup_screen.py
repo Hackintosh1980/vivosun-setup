@@ -15,7 +15,17 @@ from kivy.uix.button import Button
 from kivy.clock import Clock
 from kivy.utils import platform
 import json, os, time, config
+from kivy.core.text import LabelBase
+import os
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FA_PATH = os.path.join(BASE_DIR, "assets", "fonts", "fa-solid-900.ttf")
+
+if os.path.exists(FA_PATH):
+    LabelBase.register(name="FA", fn_regular=FA_PATH)
+    print("✅ Font Awesome geladen:", FA_PATH)
+else:
+    print("❌ Font Awesome fehlt:", FA_PATH)
 # -------------------------------------------------------------
 # Android-sicherer Import
 # -------------------------------------------------------------
@@ -60,44 +70,64 @@ class SetupScreen(Screen):
         self.clear_widgets()
         root = BoxLayout(orientation="vertical", spacing=8, padding=12)
 
+        # Titelzeile mit FA-Symbol
         self.title = Label(
-            text="[b][color=#00ffaa]🌿 Geräte-Setup[/color][/b]",
-            markup=True, font_size="26sp"
+            markup=True,
+            text="[font=assets/fonts/fa-solid-900.ttf]\uf013[/font]  [b][color=#00ffaa]Geräte-Setup[/color][/b]",
+            font_size="26sp"
         )
         self.status = Label(
             text="[color=#aaaaaa]Initialisiere Bridge…[/color]",
-            markup=True, font_size="18sp"
+            markup=True,
+            font_size="18sp"
         )
 
         # Scrollbare Geräteliste
         self.list_container = GridLayout(
-            cols=1, size_hint_y=None, spacing=6, padding=[0, 4, 0, 12]
+            cols=1,
+            size_hint_y=None,
+            spacing=6,
+            padding=[0, 4, 0, 12]
         )
         self.list_container.bind(minimum_height=self.list_container.setter("height"))
         scroll = ScrollView(size_hint=(1, 1))
         scroll.add_widget(self.list_container)
 
-        # Button-Reihe
+        # Button-Reihe mit FA Icons
         btn_row = BoxLayout(size_hint=(1, 0.18), spacing=8)
+
         btn_reload = Button(
-            text="🔁 Neu laden", font_size="18sp",
-            background_normal="", background_color=(0.2, 0.4, 0.2, 1),
+            markup=True,
+            text="[font=assets/fonts/fa-solid-900.ttf]\uf021[/font]  Neu laden",
+            font_size="18sp",
+            background_normal="",
+            background_color=(0.2, 0.4, 0.2, 1),
             on_release=lambda *_: self.load_device_list()
         )
+
         btn_settings = Button(
-            text="Einstellungen", font_size="18sp",
-            background_normal="", background_color=(0.2, 0.3, 0.5, 1),
+            markup=True,
+            text="[font=assets/fonts/fa-solid-900.ttf]\uf013[/font]  Einstellungen",
+            font_size="18sp",
+            background_normal="",
+            background_color=(0.2, 0.3, 0.5, 1),
             on_release=lambda *_: self.to_settings()
         )
+
         btn_dashboard = Button(
-            text="➡️ Dashboard", font_size="18sp",
-            background_normal="", background_color=(0.25, 0.45, 0.25, 1),
+            markup=True,
+            text="[font=assets/fonts/fa-solid-900.ttf]\uf015[/font]  Dashboard",
+            font_size="18sp",
+            background_normal="",
+            background_color=(0.25, 0.45, 0.25, 1),
             on_release=lambda *_: self.to_dashboard()
         )
+
         btn_row.add_widget(btn_reload)
         btn_row.add_widget(btn_settings)
         btn_row.add_widget(btn_dashboard)
 
+        # Layout zusammenbauen
         root.add_widget(self.title)
         root.add_widget(self.status)
         root.add_widget(scroll)

@@ -62,33 +62,19 @@ class VPDScatterWindow(FloatLayout):
             self.led_circle = Ellipse(pos=(15, 15), size=(20, 20))
         self.header.add_widget(self.led_canvas)
 
-
         # Titel (Icon + Text)
-        title_box = BoxLayout(
-            orientation="horizontal",
-            spacing=6,
-            size_hint_x=0.45,      # <-- flexibler Anteil statt fester Breite
-            height=dp(24),
-            pos_hint={"center_y": 0.5}
-        )
-        title_box.add_widget(Label(
-            text="\uf6c4",
-            font_name="FA",
-            font_size="18sp",
-            color=(0.85, 1.0, 0.9, 1),
-            size_hint_x=None,
-            width=dp(24)
-        ))
-        title_box.add_widget(Label(
-            text="VPD Scatter",
-            font_size="18sp",
-            color=(0.95, 1.0, 0.95, 1),
-            bold=True,
-            halign="left",
-            valign="middle",
-            text_size=(None, None)
-        ))
+        title_box = BoxLayout(orientation="horizontal", spacing=6, size_hint_x=None)
+        title_box.add_widget(Label(text="\uf6c4", font_name="FA", font_size="18sp",
+                                   color=(0.85, 1.0, 0.9, 1), size_hint_x=None, width=24))
+        title_box.add_widget(Label(text="VPD Scatter", font_size="18sp",
+                                   color=(0.95, 1.0, 0.95, 1), bold=True))
         self.header.add_widget(title_box)
+
+        # LIVE Badge
+        self.live_label = Label(text="[b]LIVE[/b]", markup=True, font_size="16sp", color=(1, 0.8, 0.2, 1))
+        self.header.add_widget(self.live_label)
+
+        self.add_widget(self.header)
 
         # ---------------------------------------------------
         # Graph – X: 0…35 °C (gewünscht), Y: 30…90 %

@@ -17,7 +17,8 @@ presplash.color = black
 orientation = landscape
 fullscreen = 1
 
-android.add_assets = assets/fonts/VivosunEmoji.ttf
+# Nur Font Awesome Solid soll eingebunden werden
+android.add_assets = assets/fonts/fa-solid-900.ttf
 requirements = python3,kivy,pyjnius,pillow,certifi,six,kivy_garden.graph
 
 android.add_src = src/main/java
