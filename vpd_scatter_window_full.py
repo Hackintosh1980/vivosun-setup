@@ -89,6 +89,7 @@ class VPDScatterWindow(FloatLayout):
             text_size=(None, None)
         ))
         self.header.add_widget(title_box)
+        self.add_widget(self.header)
 
         # ---------------------------------------------------
         # Graph – X: 0…35 °C (gewünscht), Y: 30…90 %
