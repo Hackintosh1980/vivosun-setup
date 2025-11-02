@@ -11,11 +11,10 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 /**
- * ⚡ BleBridgePersistent ULTRAFAST (Dominik Edition)
- *  - extrem schnelle JSON-Updates (≈100 ms Flush)
- *  - keine Scan-Batching-Verzögerung (reportDelay=0)
- *  - optimiertes Throttling & stabiler Multidevice-Flow
- *  - kompatibel mit VSCTLE42A Controller + ThermoBeacon2 Sensor
+ * ⚡ BleBridgeTransient ULTRA – Echtzeit-Version
+ *  - Unterstützt VSCTLE-Controller + ThermoBeacon2-Sensor
+ *  - Kein periodischer Flush-Thread → schreibt nur bei Änderungen
+ *  - Extrem niedrige Latenz, alle Updates sofort in JSON
  */
 public class BleBridgePersistent {
 
@@ -30,15 +29,13 @@ public class BleBridgePersistent {
     private static final Object lock = new Object();
     private static final Map<String, JSONObject> lastSeen = new HashMap<>();
 
-    // --- Fine tuning ---
     private static final int RSSI_MIN = -95;
     private static final int COMPANY_ID = 0x0019;
     private static final int NEED_MIN = 2 + 6 + 2 + (2 * 4) + 1;
 
-    // 🔥 Aggressive flush tuning
-    private static final long WRITE_MS = 150L;   // flush alle 0.15 s
-    private static final long THROTTLE_MS = 50L; // 50 ms minimaler Abstand
-    private static long lastAppend = 0;
+    // ultraschnelle Scanfrequenz
+    private static final long CHANGE_WRITE_MS = 50L; // minimale Pause zwischen zwei Writes
+    private static long lastWrite = 0L;
 
     // -----------------------------------------------------------
     // Start / Stop
@@ -64,23 +61,19 @@ public class BleBridgePersistent {
             outFile = new File(ctx.getFilesDir(), outFileName);
             Log.i(TAG, "Start → file=" + outFile.getAbsolutePath());
 
-            // 🏎 Sofortige Ergebnislieferung, kein Delay
             ScanSettings settings = new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                    .setReportDelay(0) // Echtzeit, keine Batch-Verzögerung
+                    .setReportDelay(0) // direkt liefern, kein Batch!
                     .build();
 
             callback = new ScanCallback() {
                 @Override
                 public void onScanResult(int type, ScanResult r) { handle(r); }
-                @Override
-                public void onBatchScanResults(List<ScanResult> results) {
-                    for (ScanResult res : results) handle(res);
-                }
 
                 private void handle(ScanResult r) {
                     try {
-                        if (r == null || r.getDevice() == null) return;
+                        if (!running || r == null || r.getDevice() == null) return;
+
                         String name = r.getDevice().getName();
                         if (name == null) name = "";
                         String mac = r.getDevice().getAddress();
@@ -94,6 +87,7 @@ public class BleBridgePersistent {
 
                         byte[] payload = md.get(COMPANY_ID);
                         if (payload == null) {
+                            // Fallback: längsten MSD-Block nehmen
                             int bestLen = 0;
                             for (int i = 0; i < md.size(); i++) {
                                 byte[] p = md.valueAt(i);
@@ -109,16 +103,28 @@ public class BleBridgePersistent {
                                 : (name.toLowerCase().contains("thermobeacon")) ? "sensor"
                                 : "unknown";
 
-                        long now = System.currentTimeMillis();
-                        if (now - lastAppend < THROTTLE_MS) return;
-                        lastAppend = now;
-
                         JSONObject j = decodeThermoBeaconLike(name, mac, rssi, payload, type);
-                        if (j != null) {
-                            synchronized (lock) {
+                        if (j == null) return;
+
+                        synchronized (lock) {
+                            JSONObject prev = lastSeen.get(mac);
+                            // Nur schreiben, wenn sich Werte wirklich geändert haben
+                            if (prev == null || !prev.toString().equals(j.toString())) {
                                 lastSeen.put(mac, j);
+                                long now = System.currentTimeMillis();
+                                if (now - lastWrite > CHANGE_WRITE_MS) {
+                                    writeSnapshot();
+                                    lastWrite = now;
+                                }
                             }
                         }
+
+                        if (DEBUG)
+                            Log.i(TAG, "UPDATE " + mac + " Ti=" + j.optDouble("temperature_int")
+                                    + " Hi=" + j.optDouble("humidity_int")
+                                    + " Te=" + j.optDouble("temperature_ext")
+                                    + " He=" + j.optDouble("humidity_ext")
+                                    + " pkt=" + j.optInt("packet_counter"));
 
                     } catch (Throwable t) {
                         Log.e(TAG, "handle", t);
@@ -126,34 +132,8 @@ public class BleBridgePersistent {
                 }
             };
 
-            // 🔄 Writer Thread (Echtzeit-JSON)
-            Thread writer = new Thread(() -> {
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
-                try {
-                    while (running) {
-                        Thread.sleep(WRITE_MS);
-                        List<JSONObject> snapshot;
-                        synchronized (lock) {
-                            if (lastSeen.isEmpty()) continue;
-                            snapshot = new ArrayList<>(lastSeen.values());
-                        }
-                        JSONArray arr = new JSONArray(snapshot);
-                        File tmp = new File(outFile.getAbsolutePath() + ".tmp");
-                        try (FileOutputStream fos = new FileOutputStream(tmp, false)) {
-                            fos.write(arr.toString().getBytes());
-                            fos.flush();
-                        }
-                        tmp.renameTo(outFile);
-                        if (DEBUG) Log.d(TAG, "⚡ JSON flush (" + arr.length() + ")");
-                    }
-                } catch (Throwable th) {
-                    Log.e(TAG, "writer", th);
-                }
-            });
-            writer.start();
-
             scanner.startScan(null, settings, callback);
-            Log.i(TAG, "RUNNING – UltraFast BLE bridge active");
+            Log.i(TAG, "RUNNING – ultra-low-latency");
             return "OK:RUNNING";
 
         } catch (Throwable t) {
@@ -179,7 +159,25 @@ public class BleBridgePersistent {
     }
 
     // -----------------------------------------------------------
-    // Decoder (wie zuvor)
+    // Sofort-Write
+    // -----------------------------------------------------------
+    private static void writeSnapshot() {
+        try {
+            List<JSONObject> snapshot = new ArrayList<>(lastSeen.values());
+            JSONArray arr = new JSONArray(snapshot);
+            File tmp = new File(outFile.getAbsolutePath() + ".tmp");
+            try (FileOutputStream fos = new FileOutputStream(tmp, false)) {
+                fos.write(arr.toString().getBytes());
+                fos.flush();
+            }
+            tmp.renameTo(outFile);
+        } catch (Throwable e) {
+            Log.e(TAG, "writeSnapshot", e);
+        }
+    }
+
+    // -----------------------------------------------------------
+    // Decoder
     // -----------------------------------------------------------
     private static JSONObject decodeThermoBeaconLike(String name, String mac, int rssi, byte[] payload, String type) {
         try {
@@ -208,7 +206,8 @@ public class BleBridgePersistent {
             double T_e = te / 16.0;
             double H_e = he / 16.0;
 
-            if (!(T_i >= -40 && T_i <= 85 && T_e >= -40 && T_e <= 85 && H_i >= 0 && H_i <= 110 && H_e >= 0 && H_e <= 110))
+            if (!(T_i >= -40 && T_i <= 85 && T_e >= -40 && T_e <= 85
+                    && H_i >= 0 && H_i <= 110 && H_e >= 0 && H_e <= 110))
                 return null;
 
             JSONObject o = new JSONObject();
@@ -222,10 +221,6 @@ public class BleBridgePersistent {
             o.put("temperature_ext", T_e);
             o.put("humidity_ext", H_e);
             o.put("packet_counter", pkt);
-
-            if (DEBUG)
-                Log.i(TAG, String.format("UPDATE %s Ti=%.2f Hi=%.2f Te=%.2f He=%.2f pkt=%d", mac, T_i, H_i, T_e, H_e, pkt));
-
             return o;
 
         } catch (Throwable t) {

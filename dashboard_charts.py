@@ -119,6 +119,16 @@ class ChartManager:
                 self._set_no_data_labels()
                 return
 
+            # 🔍 Nur Gerät aus config.json laden
+            device_id = config.load_device_id()
+            if device_id:
+                data = [d for d in data if d.get("address") == device_id]
+                if not data:
+                    print(f"⚠️ Keine Daten für aktives Gerät {device_id}.")
+                    self._set_no_data_labels()
+                    return
+
+            # Jetzt sicheres erstes Element verwenden
             d = data[0]
 
             # Werte dekodieren

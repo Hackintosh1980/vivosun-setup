@@ -55,3 +55,33 @@ def save_device_id(device_id):
 
 def get_device_id():
     return load_config().get("device_id")
+
+# -------------------------------------------------------------
+# 📡 Gerät speichern / laden (MAC-Adresse)
+# -------------------------------------------------------------
+import os, json
+
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+
+def save_device_id(addr: str):
+    """Speichert die aktive BLE-MAC-Adresse ins config.json."""
+    try:
+        cfg = load_config()
+        cfg["device_id"] = addr
+        with open(CONFIG_PATH, "w", encoding="utf8") as f:
+            json.dump(cfg, f, indent=2)
+        print(f"💾 device_id gespeichert → {addr}")
+    except Exception as e:
+        print("⚠️ Fehler beim Speichern der device_id:", e)
+
+def load_device_id() -> str | None:
+    """Lädt gespeicherte BLE-MAC-Adresse aus config.json."""
+    try:
+        if not os.path.exists(CONFIG_PATH):
+            return None
+        with open(CONFIG_PATH, "r", encoding="utf8") as f:
+            cfg = json.load(f)
+        return cfg.get("device_id")
+    except Exception as e:
+        print("⚠️ Fehler beim Laden der device_id:", e)
+        return None
