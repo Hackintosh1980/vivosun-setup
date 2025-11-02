@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 SetupScreen – Geräte-Scan + Konfiguration + Reload
-Optisch an Dashboard angepasst
+Desktop & Android-kompatibel
 © 2025 Dominik Rosenthal (Hackintosh1980)
 """
 
@@ -14,10 +14,12 @@ from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.clock import Clock
 from kivy.utils import platform
-import json, os, time, config
 from kivy.core.text import LabelBase
-import os
+import json, os, subprocess, config
 
+# -------------------------------------------------------------
+# Font Awesome laden
+# -------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FA_PATH = os.path.join(BASE_DIR, "assets", "fonts", "fa-solid-900.ttf")
 
@@ -26,6 +28,7 @@ if os.path.exists(FA_PATH):
     print("✅ Font Awesome geladen:", FA_PATH)
 else:
     print("❌ Font Awesome fehlt:", FA_PATH)
+
 # -------------------------------------------------------------
 # Android-sicherer Import
 # -------------------------------------------------------------
@@ -36,47 +39,45 @@ except ModuleNotFoundError:
     print("⚠️ jnius deaktiviert – BLE-Bridge läuft nur auf Android.")
 
 # -------------------------------------------------------------
-# BLE-JSON Pfad (Android & Desktop)
+# JSON-Zielpfad bestimmen
 # -------------------------------------------------------------
 if platform == "android":
     APP_JSON = "/data/user/0/org.hackintosh1980.dashboard/files/ble_scan.json"
 else:
-    APP_JSON = os.path.join(
-        os.path.dirname(__file__),
-        "blebridge_desktop",
-        "ble_scan.json"
-    )
+    APP_JSON = os.path.join(BASE_DIR, "blebridge_desktop", "ble_scan.json")
+
 print(f"🗂️ Verwende APP_JSON = {APP_JSON}")
 
 
 class SetupScreen(Screen):
-    """
-    Geräte-Setup – startet dauerhafte BleBridgePersistent
-    oder Desktop-Bridge (Java-Version),
-    listet gefundene Geräte und speichert Auswahl in config.json.
-    """
+    """Geräte-Setup: startet Bridge und listet erkannte Geräte."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bridge_proc = None
+        self._cancel_evt = False
+        self._bridge_started = False
 
     # ---------------------------------------------------------
     # Lifecycle
     # ---------------------------------------------------------
     def on_enter(self, *args):
         self._cancel_evt = False
-        self._bridge_started = False
         self.build_ui()
         Clock.schedule_once(self.start_bridge_once, 0.5)
 
     def on_leave(self, *args):
-        """Nur Scan-Loop stoppen, Bridge weiterlaufen lassen."""
+        """Nur Scan-Loop stoppen (Bridge läuft im Hintergrund weiter)."""
         self._cancel_evt = True
 
     # ---------------------------------------------------------
-    # UI
+    # UI-Aufbau
     # ---------------------------------------------------------
     def build_ui(self):
         self.clear_widgets()
         root = BoxLayout(orientation="vertical", spacing=8, padding=12)
 
-        # Titelzeile mit FA-Symbol
+        # Header
         self.title = Label(
             markup=True,
             text="[font=assets/fonts/fa-solid-900.ttf]\uf013[/font]  [b][color=#00ffaa]Geräte-Setup[/color][/b]",
@@ -89,19 +90,13 @@ class SetupScreen(Screen):
         )
 
         # Scrollbare Geräteliste
-        self.list_container = GridLayout(
-            cols=1,
-            size_hint_y=None,
-            spacing=6,
-            padding=[0, 4, 0, 12]
-        )
+        self.list_container = GridLayout(cols=1, size_hint_y=None, spacing=6, padding=[0, 4, 0, 12])
         self.list_container.bind(minimum_height=self.list_container.setter("height"))
         scroll = ScrollView(size_hint=(1, 1))
         scroll.add_widget(self.list_container)
 
-        # Button-Reihe mit FA Icons
+        # Buttons
         btn_row = BoxLayout(size_hint=(1, 0.18), spacing=8)
-
         btn_reload = Button(
             markup=True,
             text="[font=assets/fonts/fa-solid-900.ttf]\uf021[/font]  Neu laden",
@@ -110,7 +105,14 @@ class SetupScreen(Screen):
             background_color=(0.2, 0.4, 0.2, 1),
             on_release=lambda *_: self.load_device_list()
         )
-
+        btn_dashboard = Button(
+            markup=True,
+            text="[font=assets/fonts/fa-solid-900.ttf]\uf015[/font]  Dashboard",
+            font_size="18sp",
+            background_normal="",
+            background_color=(0.25, 0.45, 0.25, 1),
+            on_release=lambda *_: self.to_dashboard()
+        )
         btn_settings = Button(
             markup=True,
             text="[font=assets/fonts/fa-solid-900.ttf]\uf013[/font]  Einstellungen",
@@ -120,20 +122,10 @@ class SetupScreen(Screen):
             on_release=lambda *_: self.to_settings()
         )
 
-        btn_dashboard = Button(
-            markup=True,
-            text="[font=assets/fonts/fa-solid-900.ttf]\uf015[/font]  Dashboard",
-            font_size="18sp",
-            background_normal="",
-            background_color=(0.25, 0.45, 0.25, 1),
-            on_release=lambda *_: self.to_dashboard()
-        )
-
         btn_row.add_widget(btn_reload)
-        btn_row.add_widget(btn_settings)
         btn_row.add_widget(btn_dashboard)
+        btn_row.add_widget(btn_settings)
 
-        # Layout zusammenbauen
         root.add_widget(self.title)
         root.add_widget(self.status)
         root.add_widget(scroll)
@@ -141,108 +133,75 @@ class SetupScreen(Screen):
         self.add_widget(root)
 
     # ---------------------------------------------------------
-    # ---------------------------------------------------------
-    # BLE-Bridge starten
-    # ---------------------------------------------------------
-    # ---------------------------------------------------------
     # BLE-Bridge starten
     # ---------------------------------------------------------
     def start_bridge_once(self, *args):
-        """Startet BleBridgePersistent (Android) oder Desktop-BLE-Bridge (Java-Version)."""
+        """Startet BleBridgePersistent (Android) oder Desktop-Java-Bridge."""
         if self._bridge_started or self._cancel_evt:
             return
         self._bridge_started = True
 
         try:
             if platform == "android" and autoclass:
-                # --- 📱 Android Bridge ---
+                # 📱 Android Bridge
                 ctx = autoclass("org.kivy.android.PythonActivity").mActivity
                 BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
                 ret = BleBridgePersistent.start(ctx, "ble_scan.json")
-                print("📡 BleBridgePersistent.start() →", ret)
-                self.status.text = "[color=#00ffaa]🌿 Android-Bridge aktiv (dauerhafter Scan)[/color]"
+                print("📡 Android-Bridge gestartet:", ret)
+                self.status.text = "[color=#00ffaa]🌿 Android-Bridge aktiv[/color]"
 
             else:
-                # --- 💻 Desktop Bridge (Java über BlueZ/TinyB) ---
-                import subprocess
-
-                # Verzeichnis & Datei-Pfade
-                bridge_dir = os.path.join(os.path.dirname(__file__), "blebridge_desktop")
+                # 💻 Desktop Bridge
+                bridge_dir = os.path.join(BASE_DIR, "blebridge_desktop")
                 java_file = os.path.join(bridge_dir, "BleBridgeDesktop.java")
                 class_file = os.path.join(bridge_dir, "BleBridgeDesktop.class")
-                json_target = os.path.join(bridge_dir, "ble_scan.json")
-
                 if not os.path.exists(bridge_dir):
-                    self.status.text = "[color=#ff5555]❌ Desktop-Bridge-Verzeichnis fehlt[/color]"
-                    print(f"⚠️ Bridge-Verzeichnis nicht gefunden: {bridge_dir}")
+                    self.status.text = "[color=#ff5555]❌ Bridge-Verzeichnis fehlt[/color]"
+                    print("⚠️ Fehlendes Verzeichnis:", bridge_dir)
                     return
 
-                # Kompilieren falls notwendig
                 if not os.path.exists(class_file):
                     print("🛠️ Kompiliere BleBridgeDesktop.java …")
                     subprocess.run(["javac", java_file], cwd=bridge_dir, check=True)
 
-                # Starten
                 print("🚀 Starte BleBridgeDesktop …")
-                subprocess.Popen([
-                    "sudo",
-                    "java",
-                    "-cp",
-                    ".:/usr/share/java/json-simple.jar",
-                    "BleBridgeDesktop"
+                self.bridge_proc = subprocess.Popen([
+                    "sudo", "java", "-cp", ".:/usr/share/java/json-simple.jar", "BleBridgeDesktop"
                 ], cwd=bridge_dir)
 
-                self.status.text = f"[color=#00ffaa]🌿 Desktop-BLE aktiv:[/color] {json_target}"
-                print(f"💾 JSON-Ziel: {json_target}")
+                print("💾 Desktop-BLE gestartet →", APP_JSON)
+                self.status.text = f"[color=#00ffaa]🌿 Desktop-BLE aktiv:[/color] {APP_JSON}"
 
-            # --- Nach dem Start Geräte regelmäßig laden ---
             Clock.schedule_once(self.load_device_list, 3)
             Clock.schedule_interval(self.load_device_list, 10)
 
         except Exception as e:
-            print("⚠️ Fehler beim Start der Bridge:", e)
             self.status.text = f"[color=#ff5555]❌ Startfehler:[/color] {e}"
+            print("⚠️ Fehler beim Start:", e)
 
-    # JSON lesen + Liste erzeugen
+    # ---------------------------------------------------------
+    # JSON lesen & Geräte auflisten
     # ---------------------------------------------------------
     def load_device_list(self, *args):
-        """Liest aktuelle JSON-Datei und zeigt erkannte Geräte."""
         if self._cancel_evt:
             return
         try:
             if not os.path.exists(APP_JSON):
-                self.status.text = "[color=#ffaa00]Noch keine JSON-Daten...[/color]"
+                self.status.text = "[color=#ffaa00]Noch keine JSON-Daten…[/color]"
                 return
-
             with open(APP_JSON, "r") as f:
                 data = json.load(f)
-
             if not data:
-                self.status.text = "[color=#ffaa00]Keine Geräte erkannt...[/color]"
+                self.status.text = "[color=#ffaa00]Keine Geräte erkannt…[/color]"
                 return
 
             self.list_container.clear_widgets()
             devices = {}
-
             for d in data:
-                name = (d.get("name") or "").strip()
+                name = (d.get("name") or "Unbekannt").strip()
                 addr = (d.get("address") or "").strip()
-                if not addr:
-                    continue
-
-                lname = name.lower()
-                # Geräte-Erkennung mit Priorität: GrowHub > ThermoBeacon > Unbekannt
-                if "growhub" in lname:
-                    devices[addr] = name or "GrowHub Controller"
-                elif any(x in lname for x in ["thermo", "beacon", "vivosun"]) or addr.upper().startswith("F0:F1:"):
-                    devices[addr] = name or "ThermoBeacon"
-                else:
-                    # Zeige auch unbekannte Geräte
-                    devices[addr] = name or "Unbekanntes Gerät"
-
-            if not devices:
-                self.status.text = "[color=#ffaa00]Noch keine passenden Geräte...[/color]"
-                return
+                if addr:
+                    devices[addr] = name
 
             self.status.text = f"[color=#00ffaa]{len(devices)} Gerät(e)[/color] – zum Speichern tippen:"
             for addr, name in sorted(devices.items()):
@@ -259,60 +218,33 @@ class SetupScreen(Screen):
 
         except Exception as e:
             self.status.text = f"[color=#ff8888]Fehler beim Lesen:[/color] {e}"
+            print("⚠️ JSON-Ladefehler:", e)
 
-            if not devices:
-                self.status.text = "[color=#ffaa00]Noch keine passenden Geräte...[/color]"
-                return
-
-            self.status.text = f"[color=#00ffaa]{len(devices)} Gerät(e)[/color] – zum Speichern tippen:"
-            for addr, name in sorted(devices.items()):
-                btn = Button(
-                    text=f"{name}\n[b]{addr}[/b]",
-                    markup=True,
-                    size_hint_y=None,
-                    height="68dp",
-                    background_normal="",
-                    background_color=(0.15, 0.25, 0.2, 1)
-                )
-                btn.bind(on_release=lambda _b, a=addr: self.select_device(a))
-                self.list_container.add_widget(btn)
-
-        except Exception as e:
-            self.status.text = f"[color=#ff8888]Fehler beim Lesen:[/color] {e}"
-    # ---------------------------------------------------------
-    # Auswahl speichern + Wechsel
+   # ---------------------------------------------------------
+    # Gerät speichern + aktive MAC setzen (Android)
     # ---------------------------------------------------------
     def select_device(self, addr):
-        """Speichert Device-ID, startet Bridge (falls Android) und wechselt ins Dashboard."""
         try:
+            # Speichern in config.json (bleibt unverändert)
             config.save_device_id(addr)
             self.status.text = f"[color=#00ffaa]✅ Gespeichert:[/color] {addr}"
 
-            # --- 🔥 Android: Bridge direkt starten ---
-            from kivy.utils import platform
-            if platform == "android":
-                from jnius import autoclass
-                PythonActivity = autoclass("org.kivy.android.PythonActivity")
-                ctx = PythonActivity.mActivity
-                BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
-                ret = BleBridgePersistent.start(ctx, "ble_scan.json")
-                print(f"📡 Bridge sofort gestartet → {ret}")
+            # 📱 Android: Bridge auf dieses Gerät filtern
+            if platform == "android" and autoclass:
+                try:
+                    BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
+                    BleBridgePersistent.setActiveMac(addr)
+                    print(f"🎯 Aktive MAC gesetzt: {addr}")
+                except Exception as e:
+                    print("⚠️ Fehler beim Setzen der aktiven MAC:", e)
 
-                # Dashboard-Charts sofort aktivieren
-                from kivy.app import App
-                app = App.get_running_app()
-                if hasattr(app, "chart_mgr"):
-                    app.chart_mgr.start_live_poll()
-                    print("✅ Live-Poll nach Gerätespeicherung aktiviert")
-
-            # --- Wechsel ins Dashboard ---
+            # Nach kurzer Verzögerung ins Dashboard wechseln
             if self.manager and "dashboard" in self.manager.screen_names:
                 Clock.schedule_once(lambda *_: self.to_dashboard(), 0.3)
 
         except Exception as e:
-            self.status.text = f"[color=#ff8888]Fehler beim Speichern:[/color] {e}"
-            print(f"⚠️ Fehler in select_device: {e}")
-
+            print("⚠️ Fehler beim Speichern:", e)
+            self.status.text = f"[color=#ff5555]Fehler:[/color] {e}"
 
     # ---------------------------------------------------------
     # Navigation

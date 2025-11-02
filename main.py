@@ -70,10 +70,11 @@ class VivosunApp(App):
         print(f"🖥️ Plattform: {platform}")
         print(f"📄 JSON-Pfad (APP_JSON): {APP_JSON}")
         print(f"⚙️ ChartManager running={getattr(self.chart_mgr, 'running', None)}")
-        # --- Android: Falls Config vorhanden & Mode=live → Bridge starten ---
-        if platform == "android":
-            try:
-                cfg = config.load_config()
+
+       # --- Bridge-Start: Android oder Desktop ---
+        try:
+            cfg = config.load_config()
+            if platform == "android":
                 if cfg.get("mode") == "live" and cfg.get("device_id"):
                     from jnius import autoclass
                     PythonActivity = autoclass("org.kivy.android.PythonActivity")
@@ -81,11 +82,25 @@ class VivosunApp(App):
                     BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
                     ret = BleBridgePersistent.start(ctx, "ble_scan.json")
                     print(f"📡 Android Bridge auto-start → {ret}")
-            except Exception as e:
-                print(f"⚠️ Bridge auto-start Fehler: {e}")
-        else:
-            print("💻 Desktop-Modus erkannt → keine Bridge gestartet")
+            else:
+                # 💻 Desktop Bridge automatisch starten
+                import subprocess, os
+                bridge_dir = os.path.join(os.path.dirname(__file__), "blebridge_desktop")
+                java_file = os.path.join(bridge_dir, "BleBridgeDesktop.java")
+                class_file = os.path.join(bridge_dir, "BleBridgeDesktop.class")
 
+                if not os.path.exists(class_file):
+                    print("🛠️ Kompiliere BleBridgeDesktop.java …")
+                    subprocess.run(["javac", java_file], cwd=bridge_dir, check=True)
+
+                print("🚀 Starte Desktop-BLE-Bridge …")
+                self.bridge_proc = subprocess.Popen([
+                    "sudo", "java", "-cp", ".:/usr/share/java/json-simple.jar", "BleBridgeDesktop"
+                ], cwd=bridge_dir)
+                print("✅ Desktop-Bridge aktiv")
+
+        except Exception as e:
+            print(f"⚠️ Fehler beim Bridge-Start: {e}")
         # --- Uhrzeit im Header ---
         Clock.schedule_interval(self.update_clock, 1)
 
@@ -94,6 +109,22 @@ class VivosunApp(App):
             Clock.schedule_once(self._android_post_init, 1.0)
 
         return self.sm
+# -------------------------------------------------------
+    # App Stop → Bridge beenden (nur Desktop)
+    # -------------------------------------------------------
+    def on_stop(self):
+        if platform != "android":
+            try:
+                setup = self.sm.get_screen("setup")
+                if hasattr(setup, "bridge_proc") and setup.bridge_proc:
+                    print("🛑 Beende Desktop-BLE-Bridge …")
+                    setup.bridge_proc.terminate()
+                    time.sleep(1)
+                    setup.bridge_proc.kill()
+                    print("✅ Bridge beendet")
+            except Exception as e:
+                print(f"⚠️ Fehler beim Bridge-Stop: {e}")
+
 # -------------------------------------------------------
     # Android: Layout-Refresh & Permission-Check
     # -------------------------------------------------------
