@@ -185,9 +185,16 @@ class VPDScatterWindow(FloatLayout):
         self.add_widget(self.footer)
 
         # ---------------------------------------------------
-        # JSON-Live-Update (BleBridgePersistent schreibt hier)
         # ---------------------------------------------------
-        self.json_path = os.path.join(os.getenv("ANDROID_PRIVATE", "."), "ble_scan.json")
+        # JSON-Live-Update (Desktop oder Android)
+        # ---------------------------------------------------
+        if os.name == "posix" and not os.getenv("ANDROID_PRIVATE"):
+            # 💻 Desktop/Linux
+            self.json_path = "/home/domi/vivosun-setup/blebridge_desktop/ble_scan.json"
+        else:
+            # 🤖 Android-App-Verzeichnis
+            self.json_path = os.path.join(os.getenv("ANDROID_PRIVATE", "."), "ble_scan.json")
+
         self.paused = False
         self.btn_pause.bind(on_press=self.toggle_pause)
         self.btn_close.bind(on_press=self.close_self)

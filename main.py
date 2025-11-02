@@ -70,7 +70,7 @@ class VivosunApp(App):
         print(f"🖥️ Plattform: {platform}")
         print(f"📄 JSON-Pfad (APP_JSON): {APP_JSON}")
         print(f"⚙️ ChartManager running={getattr(self.chart_mgr, 'running', None)}")
-        # --- Android: Falls Config vorhanden & Mode=live → Bridge starten
+        # --- Android: Falls Config vorhanden & Mode=live → Bridge starten ---
         if platform == "android":
             try:
                 cfg = config.load_config()
@@ -80,9 +80,11 @@ class VivosunApp(App):
                     ctx = PythonActivity.mActivity
                     BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
                     ret = BleBridgePersistent.start(ctx, "ble_scan.json")
-                    print(f"📡 Bridge auto-start (Dashboard) → {ret}")
+                    print(f"📡 Android Bridge auto-start → {ret}")
             except Exception as e:
                 print(f"⚠️ Bridge auto-start Fehler: {e}")
+        else:
+            print("💻 Desktop-Modus erkannt → keine Bridge gestartet")
 
         # --- Uhrzeit im Header ---
         Clock.schedule_interval(self.update_clock, 1)
@@ -92,7 +94,6 @@ class VivosunApp(App):
             Clock.schedule_once(self._android_post_init, 1.0)
 
         return self.sm
-
 # -------------------------------------------------------
     # Android: Layout-Refresh & Permission-Check
     # -------------------------------------------------------

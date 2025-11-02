@@ -41,12 +41,13 @@ except ModuleNotFoundError:
 if platform == "android":
     APP_JSON = "/data/user/0/org.hackintosh1980.dashboard/files/ble_scan.json"
 else:
+    # Desktop: lies direkt aus der Java-Bridge-Ausgabe
     APP_JSON = os.path.join(
         os.path.dirname(__file__),
         "blebridge_desktop",
         "ble_scan.json"
     )
-print(f"🗂️ Verwende APP_JSON = {APP_JSON}")
+    print(f"🗂️ Verwende APP_JSON = {APP_JSON}")
 
 
 class SetupScreen(Screen):
@@ -184,13 +185,7 @@ class SetupScreen(Screen):
 
                 # Starten
                 print("🚀 Starte BleBridgeDesktop …")
-                subprocess.Popen([
-                    "sudo",
-                    "java",
-                    "-cp",
-                    ".:/usr/share/java/json-simple.jar",
-                    "BleBridgeDesktop"
-                ], cwd=bridge_dir)
+                subprocess.Popen(["java", "BleBridgeDesktop"], cwd=bridge_dir)
 
                 self.status.text = f"[color=#00ffaa]🌿 Desktop-BLE aktiv:[/color] {json_target}"
                 print(f"💾 JSON-Ziel: {json_target}")
@@ -229,17 +224,15 @@ class SetupScreen(Screen):
                 addr = (d.get("address") or "").strip()
                 if not addr:
                     continue
-
                 lname = name.lower()
-                # Geräte-Erkennung mit Priorität: GrowHub > ThermoBeacon > Unbekannt
+                # Geräte-Erkennung mit Priorität: GrowHub > ThermoBeacon
+                lname = name.lower()
                 if "growhub" in lname:
                     devices[addr] = name or "GrowHub Controller"
                 elif any(x in lname for x in ["thermo", "beacon", "vivosun"]) or addr.upper().startswith("F0:F1:"):
                     devices[addr] = name or "ThermoBeacon"
-                else:
-                    # Zeige auch unbekannte Geräte
-                    devices[addr] = name or "Unbekanntes Gerät"
-
+                elif name == "(unknown)":
+                    devices[addr] = "ThermoBeacon (unbekannt)"
             if not devices:
                 self.status.text = "[color=#ffaa00]Noch keine passenden Geräte...[/color]"
                 return
@@ -248,11 +241,8 @@ class SetupScreen(Screen):
             for addr, name in sorted(devices.items()):
                 btn = Button(
                     text=f"{name}\n[b]{addr}[/b]",
-                    markup=True,
-                    size_hint_y=None,
-                    height="68dp",
-                    background_normal="",
-                    background_color=(0.15, 0.25, 0.2, 1)
+                    markup=True, size_hint_y=None, height="68dp",
+                    background_normal="", background_color=(0.15, 0.25, 0.2, 1)
                 )
                 btn.bind(on_release=lambda _b, a=addr: self.select_device(a))
                 self.list_container.add_widget(btn)
@@ -260,25 +250,6 @@ class SetupScreen(Screen):
         except Exception as e:
             self.status.text = f"[color=#ff8888]Fehler beim Lesen:[/color] {e}"
 
-            if not devices:
-                self.status.text = "[color=#ffaa00]Noch keine passenden Geräte...[/color]"
-                return
-
-            self.status.text = f"[color=#00ffaa]{len(devices)} Gerät(e)[/color] – zum Speichern tippen:"
-            for addr, name in sorted(devices.items()):
-                btn = Button(
-                    text=f"{name}\n[b]{addr}[/b]",
-                    markup=True,
-                    size_hint_y=None,
-                    height="68dp",
-                    background_normal="",
-                    background_color=(0.15, 0.25, 0.2, 1)
-                )
-                btn.bind(on_release=lambda _b, a=addr: self.select_device(a))
-                self.list_container.add_widget(btn)
-
-        except Exception as e:
-            self.status.text = f"[color=#ff8888]Fehler beim Lesen:[/color] {e}"
     # ---------------------------------------------------------
     # Auswahl speichern + Wechsel
     # ---------------------------------------------------------

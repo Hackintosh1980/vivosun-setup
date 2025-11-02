@@ -11,16 +11,18 @@ from kivy_garden.graph import LinePlot
 from kivy.utils import platform
 import config, utils
 import os, json
+from kivy.utils import platform  # fehlt sonst!
 
 if platform == "android":
     APP_JSON = "/data/user/0/org.hackintosh1980.dashboard/files/ble_scan.json"
 else:
-    APP_JSON = os.path.join(os.path.dirname(__file__), "ble_scan.json")
+    APP_JSON = "/home/domi/vivosun-setup/blebridge_desktop/ble_scan.json"
 
 print(f"🗂️ Verwende APP_JSON = {APP_JSON}")
 
 
 class ChartManager:
+    ...
     def __init__(self, dashboard):
         self.dashboard = dashboard
         self.buffers = {}
@@ -78,24 +80,18 @@ class ChartManager:
     # ----------------------------------------------------------
     def start_live_poll(self):
         """Starte Polling für echte Bridge-Daten."""
-        # Wenn Simulation vorhanden: stoppen, sonst ignorieren
         if hasattr(self, "stop_simulation"):
             self.stop_simulation()
         self.running = True
 
-        # ⚙️ Buffer komplett zurücksetzen bei jedem neuen Start
         if hasattr(self, "reset_data"):
             self.reset_data()
 
-        if platform != "android":
-            print("⚠️ Live Poll deaktiviert – kein Android.")
-            return
-
-        print("📡 Starte Live-Polling …")
+        # --- Desktop darf auch pollen! ---
+        print(f"📡 Starte Live-Polling (Plattform: {platform})")
         self._poll_event = Clock.schedule_interval(
             self._poll_json, self.refresh_interval
         )
-
     def _poll_json(self, *a):
         """Liest Echtwerte aus der BleBridge JSON."""
         if not self.running:
