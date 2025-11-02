@@ -13,6 +13,8 @@ from kivy.core.text import LabelBase
 from kivy.metrics import dp
 from kivy.utils import platform
 from kivy_garden.graph import Graph, MeshLinePlot
+from kivy.clock import Clock
+import config
 import os
 # -------------------------------------------------------
 # 🌿 Globales UI-Scaling
@@ -265,8 +267,44 @@ class Tile(BoxLayout):
     ymax = NumericProperty(100)
     accent = ListProperty([0.8, 1.0, 0.6])
 
+
+
 class Dashboard(BoxLayout):
-    pass
+    """Dashboard mit Auto-Bridge-Start beim Anzeigen"""
+
+    def on_kv_post(self, base_widget):
+        """Wird automatisch nach dem KV-Layout-Load ausgeführt."""
+        if platform == "android":
+            # etwas verzögert starten, damit UI stabil ist
+            Clock.schedule_once(self._start_bridge, 1.0)
+
+    def _start_bridge(self, *_):
+        """Startet die BLE-Bridge automatisch, wenn Config vorhanden."""
+        try:
+            cfg = config.load_config()
+            if not cfg:
+                print("⚠️ Keine config.json gefunden – Bridge-Start übersprungen.")
+                return
+
+            if cfg.get("mode") == "live" and cfg.get("device_id"):
+                from jnius import autoclass
+                PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                ctx = PythonActivity.mActivity
+                BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
+                ret = BleBridgePersistent.start(ctx, "ble_scan.json")
+                print(f"📡 Bridge Auto-Start (Dashboard): {ret}")
+
+                # Optional: aktive MAC an Bridge übergeben
+                try:
+                    BleBridgePersistent.setActiveMac(cfg["device_id"])
+                    print(f"🎯 Aktive MAC gesetzt: {cfg['device_id']}")
+                except Exception as e:
+                    print(f"⚠️ MAC-Setzen fehlgeschlagen: {e}")
+            else:
+                print("💤 Kein Live-Mode oder keine Device-ID – Bridge bleibt aus.")
+
+        except Exception as e:
+            print(f"💥 Fehler im Dashboard Bridge-Start: {e}")
 
 # -------------------------------------------------------
 # Factory

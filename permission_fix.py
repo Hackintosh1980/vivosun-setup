@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-permission_fix.py – zentrale Rechte- und Statusprüfungen
+permission_fix.py – zentrale Rechte- und Statusprüfungen (Android 10–14)
 © 2025 Dominik Rosenthal (Hackintosh1980)
 """
 
@@ -9,7 +9,7 @@ from kivy.utils import platform
 
 def check_permissions():
     """
-    Prüft Bluetooth-Verfügbarkeit und ggf. weitere Systemrechte.
+    Prüft Bluetooth-Verfügbarkeit und alle relevanten Runtime-Permissions.
     Rückgabe: True = alles ok, False = Problem.
     """
     try:
@@ -27,7 +27,7 @@ def check_permissions():
                 print("⚠️ Bluetooth deaktiviert – bitte einschalten!")
                 return False
 
-            # Android Runtime-Permissions prüfen
+            # --- Basis-Permissions (Android 10–14 gültig) ---
             ContextCompat = autoclass("androidx.core.content.ContextCompat")
             ActivityCompat = autoclass("androidx.core.app.ActivityCompat")
             Manifest = autoclass("android.Manifest")
@@ -40,6 +40,28 @@ def check_permissions():
                 Manifest.permission.ACCESS_COARSE_LOCATION,
             ]
 
+            # --- Dynamisch erweitern ab Android 12 (API 31) ---
+            try:
+                BuildVersion = autoclass("android.os.Build$VERSION")
+                sdk_int = BuildVersion.SDK_INT
+                print(f"📱 Android SDK-Version erkannt: {sdk_int}")
+
+                if sdk_int >= 31:  # Android 12+
+                    permissions += [
+                        "android.permission.BLUETOOTH_SCAN",
+                        "android.permission.BLUETOOTH_CONNECT",
+                        "android.permission.BLUETOOTH_ADVERTISE",
+                    ]
+                    print("➕ Erweiterte BLE-Permissions hinzugefügt")
+
+                if sdk_int >= 33:  # Android 13+
+                    permissions += ["android.permission.POST_NOTIFICATIONS"]
+                    print("🔔 Notification-Permission hinzugefügt")
+
+            except Exception as e:
+                print(f"⚠️ SDK-Version konnte nicht ermittelt werden: {e}")
+
+            # --- Prüfen & ggf. anfordern ---
             missing = []
             for p in permissions:
                 granted = ContextCompat.checkSelfPermission(activity, p)
@@ -51,11 +73,11 @@ def check_permissions():
                 ActivityCompat.requestPermissions(activity, permissions, 1)
                 return False
 
-            print("✅ Bluetooth-/Location-Rechte vorhanden und aktiv.")
+            print("✅ Alle Bluetooth-/Location-Rechte vorhanden und aktiv.")
             return True
 
         else:
-            # Desktop / VM – Basischeck
+            # --- Desktop / Linux / VM ---
             import subprocess
             out = subprocess.run(["hciconfig"], capture_output=True, text=True)
             if "hci0" in out.stdout:
