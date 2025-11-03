@@ -13,7 +13,7 @@ from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 from kivy.utils import platform
 
 # --- Python Standard ---
-import time, os
+import time
 
 # --- Projektmodule ---
 from dashboard_gui import create_dashboard
@@ -24,7 +24,7 @@ from permission_fix import check_permissions
 from settings_screen import SettingsScreen
 import config
 
-# --- Standard Desktop-Größe (nur für Tests) ---
+# --- Standard Desktop-Größe (nur für Tests / keine Wirkung auf Android) ---
 Window.size = (1200, 700)
 
 
@@ -41,12 +41,13 @@ class VivosunApp(App):
         print("🔍 Starte Berechtigungs- und Bluetooth-Check …")
         check_permissions()
 
-        # --- Android: Fullscreen Fix ---
+        # --- Android: kleiner, robuster UI-Fix gegen Mini-UI beim Kaltstart ---
         if platform == "android":
             try:
                 Window.fullscreen = True
                 Window.softinput_mode = "pan"
                 Clock.schedule_once(lambda dt: setattr(Window, "fullscreen", True), 0.3)
+                Clock.schedule_once(lambda dt: setattr(Window, "fullscreen", True), 0.8)
                 print("✅ Android-Fullscreen aktiv")
             except Exception as e:
                 print(f"⚠️ Fullscreen-Init-Fehler: {e}")
@@ -65,8 +66,11 @@ class VivosunApp(App):
         # --- Setup-Screen, falls keine Config ---
         if not cfg or not cfg.get("mode"):
             print("⚠️ Keine Config → starte Setup-Screen")
-            setup = SetupScreen(name="setup")
-            self.sm.add_widget(setup)
+            self.sm.add_widget(SetupScreen(name="setup"))
+            # Uhr laufen lassen, falls Dashboard später kommt
+            Clock.schedule_interval(self.update_clock, 1)
+            if platform == "android":
+                Clock.schedule_once(self._android_post_init, 1.0)
             return self.sm
 
         # --- Dashboard ---
@@ -75,10 +79,8 @@ class VivosunApp(App):
         self.sm.add_widget(dash)
 
         # --- Setup + Settings hinzufügen ---
-        setup = SetupScreen(name="setup")
-        settings = SettingsScreen(name="settings")
-        self.sm.add_widget(setup)
-        self.sm.add_widget(settings)
+        self.sm.add_widget(SetupScreen(name="setup"))
+        self.sm.add_widget(SettingsScreen(name="settings"))
 
         # --- BLE-Bridge immer starten (Android only) ---
         if platform == "android":
@@ -90,11 +92,12 @@ class VivosunApp(App):
                 ret = BleBridgePersistent.start(ctx, "ble_scan.json")
                 print(f"📡 Android Bridge gestartet → {ret}")
 
-                # Device-MAC optional setzen
+                # Device-MAC optional setzen (wenn Methode existiert)
                 try:
-                    if cfg.get("device_id"):
-                        BleBridgePersistent.setActiveMac(cfg.get("device_id"))
-                        print(f"🎯 Aktive MAC gesetzt: {cfg.get('device_id')}")
+                    device_id = cfg.get("device_id")
+                    if device_id and hasattr(BleBridgePersistent, "setActiveMac"):
+                        BleBridgePersistent.setActiveMac(device_id)
+                        print(f"🎯 Aktive MAC gesetzt: {device_id}")
                 except Exception as e:
                     print(f"⚠️ Fehler beim Setzen der aktiven MAC: {e}")
 
@@ -119,38 +122,22 @@ class VivosunApp(App):
         return self.sm
 
     # -------------------------------------------------------
-    def on_stop(self):
-        """Desktop: Bridge beenden"""
-        if platform != "android":
-            try:
-                setup = self.sm.get_screen("setup")
-                if hasattr(setup, "bridge_proc") and setup.bridge_proc:
-                    print("🛑 Beende Desktop-BLE-Bridge …")
-                    setup.bridge_proc.terminate()
-                    time.sleep(1)
-                    setup.bridge_proc.kill()
-                    print("✅ Bridge beendet")
-            except Exception as e:
-                print(f"⚠️ Fehler beim Bridge-Stop: {e}")
-
-    # -------------------------------------------------------
     def _android_post_init(self, *_):
         """UI-Refresh & Permission-Check"""
         try:
             print("📱 Android-PostInit gestartet …")
 
-            # --- Dashboard-Layout neu zeichnen ---
+            # --- Dashboard-Layout neu zeichnen (ein paar Impulse genügen) ---
             try:
                 dash = self.sm.get_screen("dashboard").children[0]
                 dash.do_layout()
                 Clock.schedule_once(lambda *_: dash.do_layout(), 0.4)
                 Clock.schedule_once(lambda *_: dash.do_layout(), 0.8)
-                Clock.schedule_once(lambda *_: dash.do_layout(), 2.0)
                 print("✅ Layout-Refresh abgeschlossen")
             except Exception as e:
                 print(f"⚠️ Dashboard-Layout nicht verfügbar: {e}")
 
-            # --- Runtime-Permissions prüfen ---
+            # --- Runtime-Permissions prüfen (Basis) ---
             from jnius import autoclass
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
             activity = PythonActivity.mActivity
@@ -163,7 +150,6 @@ class VivosunApp(App):
                 "android.permission.ACCESS_FINE_LOCATION",
                 "android.permission.ACCESS_COARSE_LOCATION",
             ]
-
             for p in permissions:
                 granted = ContextCompat.checkSelfPermission(activity, p)
                 if granted != 0:
@@ -172,8 +158,7 @@ class VivosunApp(App):
                 else:
                     print(f"✅ Permission OK: {p}")
 
-            # --- Fenstergröße hart refreshen ---
-            from kivy.core.window import Window
+            # --- Fenstergröße refreshen ---
             Window.fullscreen = True
             Window.size = Window.size
             Clock.schedule_once(lambda dt: setattr(Window, "fullscreen", True), 1.0)
@@ -182,7 +167,6 @@ class VivosunApp(App):
         except Exception as e:
             print(f"⚠️ Android-Init-Fehler: {e}")
 
-# -------------------------------------------------------
     # -------------------------------------------------------
     def update_clock(self, *_):
         now = time.strftime("%H:%M:%S")
@@ -193,6 +177,8 @@ class VivosunApp(App):
         except Exception:
             pass
 
+    # -------------------------------------------------------
+    # Buttons
     # -------------------------------------------------------
     def on_scatter_pressed(self):
         """Scatter-Overlay öffnen"""
@@ -207,6 +193,7 @@ class VivosunApp(App):
     def on_stop_pressed(self, button=None):
         """Start/Stop Polling"""
         if not hasattr(self, "chart_mgr"):
+            print("⚠️ Kein ChartManager vorhanden.")
             return
 
         running = getattr(self.chart_mgr, "running", True)
@@ -215,13 +202,22 @@ class VivosunApp(App):
             self.chart_mgr.running = False
             if button:
                 button.text = "▶️ Start"
+                button.background_color = (0.2, 0.6, 0.2, 1)
         else:
-            self.chart_mgr.start_live_poll()
-            self.chart_mgr.running = True
-            if button:
-                button.text = "⏹ Stop"
+            if hasattr(self.chart_mgr, "start_polling"):
+                self.chart_mgr.start_polling()
+                self.chart_mgr.running = True
+                if button:
+                    button.text = "⏹ Stop"
+                    button.background_color = (0.6, 0.2, 0.2, 1)
+            else:
+                print("⚠️ start_polling() nicht vorhanden – bitte ChartManager aktualisieren.")
 
     def on_reset_pressed(self):
+        if not hasattr(self, "chart_mgr"):
+            print("⚠️ Kein ChartManager vorhanden.")
+            return
+        print("🔄 Werte zurückgesetzt")
         if hasattr(self.chart_mgr, "reset_data"):
             self.chart_mgr.reset_data()
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ChartManager – Live-Only (Android-robust, Bridge-Autostart, kein JSON-Clear)
+ChartManager – Live-Only (Android-robust, Bridge-Autostart, Device-Switch fix,
+sauberes Start/Stop/Reset, dicke Linien bleiben)
 © 2025 Dominik Rosenthal (Hackintosh1980)
 """
 
@@ -12,7 +13,7 @@ from kivy.utils import platform
 import config, utils
 
 # ----------------------------------------------------------
-# APP_JSON robust ermitteln (keine harte Paket-ID mehr)
+# APP_JSON robust ermitteln (keine harte Paket-ID)
 # ----------------------------------------------------------
 def _resolve_app_json():
     if platform == "android":
@@ -23,16 +24,13 @@ def _resolve_app_json():
             return os.path.join(files_dir, "ble_scan.json")
         except Exception as e:
             print("⚠️ Konnte filesDir nicht ermitteln, fallback:", e)
-            # letzter Ausweg (funktioniert i.d.R. auch):
-            return "/sdcard/Android/data/{pkg}/files/ble_scan.json".format(
-                pkg="org.hackintosh1980.vivosunreader"
-            )
+            return "/sdcard/Android/data/org.hackintosh1980.dashboard/files/ble_scan.json"
     else:
-        # Desktop-Pfad ggf. anpassen
         return os.path.expanduser("~/vivosun-setup/blebridge_desktop/ble_scan.json")
 
 APP_JSON = _resolve_app_json()
 print(f"🗂️ Verwende APP_JSON = {APP_JSON}")
+
 
 class ChartManager:
     def __init__(self, dashboard):
@@ -41,15 +39,16 @@ class ChartManager:
         self.plots = {}
         self.counter = 0
         self.running = True
-        self._bridge_started = False   # damit wir den Autostart nur einmal triggern
+        self._poll_event = None
+        self._bridge_started = False
 
         # --- Config laden ---
-        self.cfg = config.load_config()
+        self.cfg = config.load_config() or {}
         self.refresh_interval = float(self.cfg.get("refresh_interval", 4.0))
-        self.chart_window   = int(self.cfg.get("chart_window", 120))
+        self.chart_window     = int(self.cfg.get("chart_window", 120))
         print(f"🌿 ChartManager init – Live, Poll={self.refresh_interval}s, Window={self.chart_window}")
 
-        # --- Graphs vorbereiten ---
+        # --- Graphs vorbereiten (dicke Linien) ---
         for key in [
             "tile_t_in", "tile_h_in", "tile_vpd_in",
             "tile_t_out", "tile_h_out", "tile_vpd_out"
@@ -65,26 +64,24 @@ class ChartManager:
             self.plots[key] = plot
             self.buffers[key] = []
 
-            # ZeroDivision-Schutz
             if graph.ymax == graph.ymin:
                 graph.ymin = 0
                 graph.ymax = 1
 
-        # --- Sofort Bridge sicherstellen (Android), dann Poll starten ---
+        # --- Bridge sicherstellen (Android), dann Poll starten ---
         self._ensure_bridge_started()
-        print(f"📡 Starte Live-Polling (Plattform: {platform})")
-        self._poll_event = Clock.schedule_interval(self._poll_json, self.refresh_interval)
+        self.start_polling()
 
     # ----------------------------------------------------------
-    # Bridge-Autostart (nur Android)
+    # Bridge-Autostart (nur Android; device_id optional setzen)
     # ----------------------------------------------------------
     def _ensure_bridge_started(self):
         if platform != "android" or self._bridge_started:
             return
         try:
-            # nur starten, wenn config live ist
-            cfg = config.load_config()
-            if not (cfg and cfg.get("mode") == "live"):
+            # Nur starten, wenn Live-Mode in config aktiv ist
+            live_cfg = config.load_config() or {}
+            if live_cfg.get("mode") != "live":
                 print("ℹ️ Live-Mode in config nicht aktiv → Bridge-Autostart übersprungen.")
                 return
 
@@ -96,14 +93,14 @@ class ChartManager:
             ret = BleBridgePersistent.start(ctx, "ble_scan.json")
             print(f"🚀 Bridge.start → {ret}")
 
-            # optional aktive MAC aus config setzen
-            device_id = cfg.get("device_id")
-            if device_id:
-                try:
-                    BleBridgePersistent.setActiveMac(device_id)
-                    print(f"🎯 setActiveMac({device_id}) OK")
-                except Exception as e:
-                    print("⚠️ setActiveMac fehlgeschlagen:", e)
+            # Aktive MAC setzen, falls Methode existiert
+            dev = live_cfg.get("device_id")
+            try:
+                if dev and hasattr(BleBridgePersistent, "setActiveMac"):
+                    BleBridgePersistent.setActiveMac(dev)
+                    print(f"🎯 setActiveMac({dev}) OK")
+            except Exception as e:
+                print("⚠️ setActiveMac fehlgeschlagen:", e)
 
             self._bridge_started = True
 
@@ -111,25 +108,50 @@ class ChartManager:
             print("⚠️ Bridge-Autostart-Fehler:", e)
 
     # ----------------------------------------------------------
-    # Polling
+    # Polling Lifecycle
+    # ----------------------------------------------------------
+    def start_polling(self):
+        """Startet oder reschedult den Poll-Loop."""
+        if hasattr(self, "_poll_event") and self._poll_event:
+            Clock.unschedule(self._poll_event)
+        self.running = True
+        print(f"▶️ Starte Polling (Intervall {self.refresh_interval}s)")
+        self._poll_event = Clock.schedule_interval(self._poll_json, self.refresh_interval)
+
+    def stop_polling(self):
+        """Stoppt den Poll-Loop."""
+        if hasattr(self, "_poll_event") and self._poll_event:
+            Clock.unschedule(self._poll_event)
+            self._poll_event = None
+        self.running = False
+        print("⏹ Polling gestoppt.")
+
+    # ----------------------------------------------------------
+    # Haupt-Poll
     # ----------------------------------------------------------
     def _poll_json(self, *a):
         if not self.running:
             return
         try:
-            # Wenn Datei fehlt/leer → Bridge sicherstellen (einmalig) und warten
+            # Device-ID dynamisch holen (Umschaltung erlauben)
+            device_id = None
+            try:
+                device_id = getattr(config, "load_device_id", lambda: None)()
+            except Exception:
+                device_id = None
+            if not device_id:
+                device_id = self.cfg.get("device_id")
+
+            # Datei prüfen
             if not os.path.exists(APP_JSON):
                 print(f"⚠️ JSON fehlt: {APP_JSON}")
-                self._ensure_bridge_started()
                 self._set_no_data_labels()
                 return
 
             with open(APP_JSON, "r") as f:
                 content = f.read().strip()
             if not content:
-                # Datei existiert, aber noch nicht befüllt
                 print("⚠️ JSON aktuell leer (Schreibvorgang läuft).")
-                self._ensure_bridge_started()
                 self._set_no_data_labels()
                 return
 
@@ -144,22 +166,9 @@ class ChartManager:
                 self._set_no_data_labels()
                 return
 
-            # 🔍 Nur Gerät aus config.json zeigen (wenn gesetzt)
-            device_id = None
-            try:
-                # falls du eine Hilfsfunktion hast:
-                device_id = getattr(config, "load_device_id", lambda: None)()
-            except Exception:
-                device_id = None
-            if not device_id:
-                # fallback aus bereits geladener cfg
-                device_id = self.cfg.get("device_id")
-
             if device_id:
-                filtered = [d for d in data if d.get("address") == device_id]
-                if filtered:
-                    data = filtered
-                else:
+                data = [d for d in data if d.get("address") == device_id]
+                if not data:
                     print(f"⚠️ Keine Daten für aktives Gerät {device_id}.")
                     self._set_no_data_labels()
                     return
@@ -199,13 +208,15 @@ class ChartManager:
                     Clock.schedule_once(
                         lambda dt: app.scatter_window.update_values(t_int, h_int, t_ext, h_ext)
                     )
-            except Exception as e:
-                print("⚠️ Scatter update error:", e)
+            except Exception:
+                pass
 
         except Exception as e:
             print("⚠️ Polling-Fehler:", e)
             self._set_no_data_labels()
 
+    # ----------------------------------------------------------
+    # Helpers
     # ----------------------------------------------------------
     def _append_value(self, key, val):
         buf = self.buffers.setdefault(key, [])
@@ -228,7 +239,6 @@ class ChartManager:
             margin = max((y_max - y_min) * 0.2, 0.2)
             graph.ymin = round(y_min - margin, 1)
             graph.ymax = round(y_max + margin, 1)
-
             if self.counter >= self.chart_window:
                 graph.xmin = self.counter - self.chart_window
                 graph.xmax = self.counter
@@ -245,29 +255,34 @@ class ChartManager:
                 tile.ids.big.text = "--"
 
     # ----------------------------------------------------------
-    # Steuerung
+    # Reset & Config-Reload
     # ----------------------------------------------------------
-    def stop_polling(self):
-        if hasattr(self, "_poll_event"):
-            Clock.unschedule(self._poll_event)
-        self.running = False
-        print("⏹ Polling gestoppt.")
-
     def reset_data(self):
+        """Daten zurücksetzen (Polling bleibt – alias VM/Android sicher)."""
+        was_running = self.running
+        if was_running and self._poll_event:
+            Clock.unschedule(self._poll_event)
+            self._poll_event = None
+
         for key in list(self.buffers.keys()):
             self.buffers[key].clear()
-            plot = self.plots.get(key)
-            if plot:
-                plot.points = []
+            if key in self.plots:
+                self.plots[key].points = []
             tile = self.dashboard.ids.get(key)
             if tile:
                 tile.ids.big.text = "--"
+
         self.counter = 0
         print("🧹 Charts & Werte zurückgesetzt")
 
+        if was_running:
+            self.start_polling()
+
     def reload_config(self):
-        new_cfg = config.load_config()
+        new_cfg = config.load_config() or {}
         self.refresh_interval = float(new_cfg.get("refresh_interval", self.refresh_interval))
         self.chart_window     = int(new_cfg.get("chart_window", self.chart_window))
-        self.cfg.update(new_cfg or {})
+        self.cfg.update(new_cfg)
         print(f"♻️ Config neu geladen: Poll={self.refresh_interval}, Window={self.chart_window}")
+        if self.running:
+            self.start_polling()

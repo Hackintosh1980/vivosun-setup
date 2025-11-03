@@ -5,16 +5,19 @@ import android.bluetooth.le.*;
 import android.content.Context;
 import android.util.Log;
 import android.util.SparseArray;
+
 import org.json.*;
+
 import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
 /**
- * ⚡ BleBridgeTransient ULTRA – Echtzeit-Version
- *  - Unterstützt VSCTLE-Controller + ThermoBeacon2-Sensor
- *  - Kein periodischer Flush-Thread → schreibt nur bei Änderungen
- *  - Extrem niedrige Latenz, alle Updates sofort in JSON
+ * ⚡ BleBridgePersistent – Echtzeit-Version mit aktiver MAC-Umschaltung
+ *  - Unterstützt VSCTLE + ThermoBeacon2
+ *  - Schnelles JSON-Update nur bei Änderungen
+ *  - Unterstützt setActiveMac() zur Geräteselektion
+ *  - Thread-safe & extrem niedrige Latenz
  */
 public class BleBridgePersistent {
 
@@ -34,8 +37,11 @@ public class BleBridgePersistent {
     private static final int NEED_MIN = 2 + 6 + 2 + (2 * 4) + 1;
 
     // ultraschnelle Scanfrequenz
-    private static final long CHANGE_WRITE_MS = 50L; // minimale Pause zwischen zwei Writes
+    private static final long CHANGE_WRITE_MS = 50L;
     private static long lastWrite = 0L;
+
+    // aktive MAC, auf die gefiltert werden soll
+    private static volatile String activeMac = null;
 
     // -----------------------------------------------------------
     // Start / Stop
@@ -63,7 +69,7 @@ public class BleBridgePersistent {
 
             ScanSettings settings = new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                    .setReportDelay(0) // direkt liefern, kein Batch!
+                    .setReportDelay(0)
                     .build();
 
             callback = new ScanCallback() {
@@ -80,6 +86,9 @@ public class BleBridgePersistent {
                         int rssi = r.getRssi();
                         if (rssi < RSSI_MIN) return;
 
+                        // 👉 Nur das aktive Gerät durchlassen, falls gesetzt
+                        if (activeMac != null && !mac.equalsIgnoreCase(activeMac)) return;
+
                         ScanRecord rec = r.getScanRecord();
                         if (rec == null) return;
                         SparseArray<byte[]> md = rec.getManufacturerSpecificData();
@@ -87,7 +96,6 @@ public class BleBridgePersistent {
 
                         byte[] payload = md.get(COMPANY_ID);
                         if (payload == null) {
-                            // Fallback: längsten MSD-Block nehmen
                             int bestLen = 0;
                             for (int i = 0; i < md.size(); i++) {
                                 byte[] p = md.valueAt(i);
@@ -108,7 +116,6 @@ public class BleBridgePersistent {
 
                         synchronized (lock) {
                             JSONObject prev = lastSeen.get(mac);
-                            // Nur schreiben, wenn sich Werte wirklich geändert haben
                             if (prev == null || !prev.toString().equals(j.toString())) {
                                 lastSeen.put(mac, j);
                                 long now = System.currentTimeMillis();
@@ -159,7 +166,28 @@ public class BleBridgePersistent {
     }
 
     // -----------------------------------------------------------
-    // Sofort-Write
+    // Aktive MAC umschalten
+    // -----------------------------------------------------------
+    public static void setActiveMac(String mac) {
+        try {
+            if (mac == null || mac.trim().isEmpty()) {
+                activeMac = null;
+                Log.i(TAG, "Active MAC cleared");
+            } else {
+                activeMac = mac.trim().toUpperCase();
+                Log.i(TAG, "Active MAC set to " + activeMac);
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "setActiveMac", t);
+        }
+    }
+
+    public static String getActiveMac() {
+        return activeMac;
+    }
+
+    // -----------------------------------------------------------
+    // JSON Write
     // -----------------------------------------------------------
     private static void writeSnapshot() {
         try {
@@ -230,13 +258,14 @@ public class BleBridgePersistent {
     }
 
     // -----------------------------------------------------------
-    // Helpers
+    // Helper
     // -----------------------------------------------------------
     private static int le16(byte[] a, int off) {
         return ((a[off + 1] & 0xFF) << 8) | (a[off] & 0xFF);
     }
 
     private static String ts() {
-        return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(new Date());
+        return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+                .format(new Date());
     }
 }
