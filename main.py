@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VIVOSUN Ultimate – Main App mit BLE-Setup, Dashboard & Live Charts
+VIVOSUN Ultimate – Main App (First-Run Permission Popup, stabiler UI-Fix)
++ Stabiler MAC-Anzeige-Fix (Android/Desktop)
 © 2025 Dominik Rosenthal (Hackintosh1980)
 """
 
-# --- Kivy Core Imports ---
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 from kivy.utils import platform
+from kivy.uix.popup import Popup
+from kivy.uix.label import Label
+import time, os, io, json
 
-# --- Python Standard ---
-import time
-
-# --- Projektmodule ---
 from dashboard_gui import create_dashboard
 from dashboard_charts import ChartManager, APP_JSON
 from setup_screen import SetupScreen
@@ -24,164 +23,180 @@ from permission_fix import check_permissions
 from settings_screen import SettingsScreen
 import config
 
-# --- Standard Desktop-Größe (nur für Tests / keine Wirkung auf Android) ---
-Window.size = (1200, 700)
+
+# -------------------------------------------------------
+# Android-UI-Fix
+# -------------------------------------------------------
+def fix_android_ui():
+    def _stabilize(dt):
+        if Window.size[0] <= 1:
+            Clock.schedule_once(_stabilize, 0.15)
+            return
+        Window.softinput_mode = "pan"
+        Window.fullscreen = True
+        Window.size = Window.size
+        print("✅ Android-UI stabilisiert (Fullscreen + Softinput)")
+    Clock.schedule_once(_stabilize, 0.1)
 
 
 class DashboardScreen(Screen):
-    """Haupt-Dashboard-Screen."""
     pass
 
 
 class VivosunApp(App):
-    """Hauptklasse für VIVOSUN Ultimate."""
+    """Hauptklasse für VIVOSUN Ultimate"""
 
     def build(self):
         print("🌱 Starte VivosunApp …")
-        print("🔍 Starte Berechtigungs- und Bluetooth-Check …")
-        check_permissions()
-
-        # --- Android: kleiner, robuster UI-Fix gegen Mini-UI beim Kaltstart ---
         if platform == "android":
-            try:
-                Window.fullscreen = True
-                Window.softinput_mode = "pan"
-                Clock.schedule_once(lambda dt: setattr(Window, "fullscreen", True), 0.3)
-                Clock.schedule_once(lambda dt: setattr(Window, "fullscreen", True), 0.8)
-                print("✅ Android-Fullscreen aktiv")
-            except Exception as e:
-                print(f"⚠️ Fullscreen-Init-Fehler: {e}")
+            fix_android_ui()
 
-        # --- Config laden ---
+        # ---------------------------------------------------
+        # Config laden / First-Run erkennen
+        # ---------------------------------------------------
         try:
             cfg = config.load_config()
-            print(f"⚙️ Config geladen: {cfg}" if cfg else "⚠️ Keine config.json gefunden.")
-        except Exception as e:
+        except Exception:
             cfg = {}
-            print(f"⚠️ Fehler beim Laden der Config: {e}")
+        first_run = not cfg or not cfg.get("mode")
+        print("🆕 First-Run erkannt!" if first_run else "✅ Config vorhanden.")
 
-        # --- ScreenManager ---
         self.sm = ScreenManager(transition=FadeTransition())
 
-        # --- Setup-Screen, falls keine Config ---
-        if not cfg or not cfg.get("mode"):
-            print("⚠️ Keine Config → starte Setup-Screen")
+        # ---------------------------------------------------
+        # Erststart → Setup Screen
+        # ---------------------------------------------------
+        if first_run:
             self.sm.add_widget(SetupScreen(name="setup"))
-            # Uhr laufen lassen, falls Dashboard später kommt
+            self.sm.current = "setup"
             Clock.schedule_interval(self.update_clock, 1)
+
             if platform == "android":
-                Clock.schedule_once(self._android_post_init, 1.0)
+                Clock.schedule_once(self._show_permission_hint_safe, 1.0)
+                Clock.schedule_once(self._kickstart_bridge_first_run, 1.2)
+
             return self.sm
 
-        # --- Dashboard ---
+        # ---------------------------------------------------
+        # Normale Initialisierung
+        # ---------------------------------------------------
         dash = DashboardScreen(name="dashboard")
         dash.add_widget(create_dashboard())
         self.sm.add_widget(dash)
-
-        # --- Setup + Settings hinzufügen ---
         self.sm.add_widget(SetupScreen(name="setup"))
         self.sm.add_widget(SettingsScreen(name="settings"))
 
-        # --- BLE-Bridge immer starten (Android only) ---
-        if platform == "android":
-            try:
-                from jnius import autoclass
-                PythonActivity = autoclass("org.kivy.android.PythonActivity")
-                ctx = PythonActivity.mActivity
-                BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
-                ret = BleBridgePersistent.start(ctx, "ble_scan.json")
-                print(f"📡 Android Bridge gestartet → {ret}")
-
-                # Device-MAC optional setzen (wenn Methode existiert)
-                try:
-                    device_id = cfg.get("device_id")
-                    if device_id and hasattr(BleBridgePersistent, "setActiveMac"):
-                        BleBridgePersistent.setActiveMac(device_id)
-                        print(f"🎯 Aktive MAC gesetzt: {device_id}")
-                except Exception as e:
-                    print(f"⚠️ Fehler beim Setzen der aktiven MAC: {e}")
-
-            except Exception as e:
-                print(f"💥 Fehler beim Android-Bridge-Start: {e}")
-        else:
-            print("💻 Desktop erkannt – kein Android-Bridge-Start.")
-
-        # --- ChartManager ---
         self.chart_mgr = ChartManager(dash.children[0])
-        print(f"🖥️ Plattform: {platform}")
-        print(f"📄 JSON-Pfad: {APP_JSON}")
-        print(f"⚙️ ChartManager running={getattr(self.chart_mgr, 'running', None)}")
-
-        # --- Uhrzeit im Header ---
         Clock.schedule_interval(self.update_clock, 1)
+        Clock.schedule_interval(self.update_header, 1.0)
 
-        # --- Android-PostInit ---
         if platform == "android":
-            Clock.schedule_once(self._android_post_init, 1.0)
+            fix_android_ui()
 
         return self.sm
 
     # -------------------------------------------------------
-    def _android_post_init(self, *_):
-        """UI-Refresh & Permission-Check"""
+    # Popup bei fehlenden Berechtigungen
+    # -------------------------------------------------------
+    def _show_permission_hint_safe(self, *_):
+        if check_permissions():
+            print("✅ Permissions OK – kein Popup.")
+            return
+
+        msg = (
+            "⚠️ Bluetooth- oder Standortrechte fehlen.\n\n"
+            "Bitte öffne Android-Einstellungen → App-Berechtigungen → "
+            "Bluetooth & Standort aktivieren.\n\n"
+            "Danach App neu starten, um Geräte zu finden."
+        )
+        lbl = Label(text=msg, halign="center", valign="middle", text_size=(380, None))
+        popup = Popup(
+            title="Berechtigungen erforderlich",
+            content=lbl,
+            size_hint=(0.9, 0.55),
+            auto_dismiss=True,
+        )
+        popup.open()
+        print("⚠️ Erststart-Popup angezeigt – User muss Rechte manuell setzen.")
+
+    # -------------------------------------------------------
+    # Bridge-Autostart beim First-Run
+    # -------------------------------------------------------
+    def _kickstart_bridge_first_run(self, *_):
+        if platform != "android":
+            return
         try:
-            print("📱 Android-PostInit gestartet …")
-
-            # --- Dashboard-Layout neu zeichnen (ein paar Impulse genügen) ---
-            try:
-                dash = self.sm.get_screen("dashboard").children[0]
-                dash.do_layout()
-                Clock.schedule_once(lambda *_: dash.do_layout(), 0.4)
-                Clock.schedule_once(lambda *_: dash.do_layout(), 0.8)
-                print("✅ Layout-Refresh abgeschlossen")
-            except Exception as e:
-                print(f"⚠️ Dashboard-Layout nicht verfügbar: {e}")
-
-            # --- Runtime-Permissions prüfen (Basis) ---
             from jnius import autoclass
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            activity = PythonActivity.mActivity
-            ContextCompat = autoclass("androidx.core.content.ContextCompat")
-            ActivityCompat = autoclass("androidx.core.app.ActivityCompat")
+            ctx = PythonActivity.mActivity
+            BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
+            ret = BleBridgePersistent.start(ctx, "ble_scan.json")
+            print(f"📡 Bridge gestartet → {ret}")
 
-            permissions = [
-                "android.permission.BLUETOOTH",
-                "android.permission.BLUETOOTH_ADMIN",
-                "android.permission.ACCESS_FINE_LOCATION",
-                "android.permission.ACCESS_COARSE_LOCATION",
-            ]
-            for p in permissions:
-                granted = ContextCompat.checkSelfPermission(activity, p)
-                if granted != 0:
-                    ActivityCompat.requestPermissions(activity, permissions, 1)
-                    print(f"⚠️ Permission angefordert: {p}")
-                else:
-                    print(f"✅ Permission OK: {p}")
+            try:
+                BleBridgePersistent.setActiveMac(None)
+                print("🔍 Vollscan aktiv (keine MAC-Filterung)")
+            except Exception as e:
+                print(f"⚠️ setActiveMac(None) fehlgeschlagen: {e}")
 
-            # --- Fenstergröße refreshen ---
-            Window.fullscreen = True
-            Window.size = Window.size
-            Clock.schedule_once(lambda dt: setattr(Window, "fullscreen", True), 1.0)
-            print("✅ UI vollständig initialisiert & Hard-Fullscreen gesetzt")
+            if not os.path.exists(APP_JSON) or os.path.getsize(APP_JSON) < 2:
+                with io.open(APP_JSON, "w", encoding="utf-8") as f:
+                    f.write("[]")
+                print(f"🆕 Leere JSON angelegt: {APP_JSON}")
 
         except Exception as e:
-            print(f"⚠️ Android-Init-Fehler: {e}")
+            print(f"💥 Fehler beim First-Run Bridge-Start: {e}")
 
+    # -------------------------------------------------------
+    # Uhr & Header (inkl. MAC-Anzeige-Fix)
     # -------------------------------------------------------
     def update_clock(self, *_):
         now = time.strftime("%H:%M:%S")
         try:
             dash = self.sm.get_screen("dashboard").children[0]
-            header = dash.ids.header
-            header.ids.clocklbl.text = now
+            dash.ids.header.ids.clocklbl.text = now
         except Exception:
             pass
+
+    def update_header(self, *_):
+        """Aktualisiert Bluetooth-Status + MAC-Adresse stabil"""
+        try:
+            dash = self.sm.get_screen("dashboard").children[0]
+            header = dash.ids.header
+
+            # Aktuelle MAC aus ChartManager oder JSON holen
+            mac = getattr(self, "current_mac", None)
+            if not mac:
+                try:
+                    if os.path.exists(APP_JSON):
+                        with open(APP_JSON, "r") as f:
+                            data = json.load(f)
+                        if isinstance(data, list) and len(data) > 0:
+                            mac = data[0].get("address") or "--"
+                except Exception:
+                    mac = "--"
+
+            # Fallback aus Config
+            if not mac or mac == "--":
+                cfg = getattr(self.chart_mgr, "cfg", {}) or {}
+                mac = cfg.get("device_id") or "--"
+
+            bt_active = getattr(self.chart_mgr, "_bridge_started", False)
+            icon = "\uf294" if bt_active else "\uf293"  # fa-bluetooth vs fa-bluetooth-b
+            color = (0.2, 1.0, 0.3, 1) if bt_active else (1.0, 0.4, 0.3, 1)
+
+            header.ids.device_label.text = (
+                f"[font=assets/fonts/fa-solid-900.ttf]{icon}[/font] {mac}"
+            )
+            header.ids.device_label.color = color
+
+        except Exception as e:
+            print(f"⚠️ update_header Fehler: {e}")
 
     # -------------------------------------------------------
     # Buttons
     # -------------------------------------------------------
     def on_scatter_pressed(self):
-        """Scatter-Overlay öffnen"""
         from kivy.uix.modalview import ModalView
         popup = ModalView(size_hint=(1, 1), auto_dismiss=False)
         popup.add_widget(VPDScatterWindow())
@@ -191,43 +206,30 @@ class VivosunApp(App):
         self.sm.current = "setup"
 
     def on_stop_pressed(self, button=None):
-        """Start/Stop Polling"""
         if not hasattr(self, "chart_mgr"):
-            print("⚠️ Kein ChartManager vorhanden.")
             return
-
         running = getattr(self.chart_mgr, "running", True)
         if running:
             self.chart_mgr.stop_polling()
             self.chart_mgr.running = False
             if button:
-                button.text = "▶️ Start"
+                button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04b[/font] Start"
                 button.background_color = (0.2, 0.6, 0.2, 1)
         else:
-            if hasattr(self.chart_mgr, "start_polling"):
-                self.chart_mgr.start_polling()
-                self.chart_mgr.running = True
-                if button:
-                    button.text = "⏹ Stop"
-                    button.background_color = (0.6, 0.2, 0.2, 1)
-            else:
-                print("⚠️ start_polling() nicht vorhanden – bitte ChartManager aktualisieren.")
+            self.chart_mgr.start_polling()
+            self.chart_mgr.running = True
+            if button:
+                button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04d[/font] Stop"
+                button.background_color = (0.6, 0.2, 0.2, 1)
 
     def on_reset_pressed(self):
-        if not hasattr(self, "chart_mgr"):
-            print("⚠️ Kein ChartManager vorhanden.")
-            return
-        print("🔄 Werte zurückgesetzt")
-        if hasattr(self.chart_mgr, "reset_data"):
+        if hasattr(self, "chart_mgr"):
             self.chart_mgr.reset_data()
 
     def to_settings(self):
-        if self.sm and "settings" in self.sm.screen_names:
+        if "settings" in self.sm.screen_names:
             self.sm.current = "settings"
 
 
-# -------------------------------------------------------
-# App Start
-# -------------------------------------------------------
 if __name__ == "__main__":
     VivosunApp().run()

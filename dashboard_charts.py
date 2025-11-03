@@ -10,10 +10,11 @@ import os, json
 from kivy.clock import Clock
 from kivy_garden.graph import LinePlot
 from kivy.utils import platform
+from kivy.app import App
 import config, utils
 
 # ----------------------------------------------------------
-# APP_JSON robust ermitteln (keine harte Paket-ID)
+# APP_JSON robust ermitteln
 # ----------------------------------------------------------
 def _resolve_app_json():
     if platform == "android":
@@ -23,7 +24,7 @@ def _resolve_app_json():
             files_dir = PythonActivity.mActivity.getFilesDir().getAbsolutePath()
             return os.path.join(files_dir, "ble_scan.json")
         except Exception as e:
-            print("⚠️ Konnte filesDir nicht ermitteln, fallback:", e)
+            print("⚠️ filesDir nicht ermittelbar, fallback:", e)
             return "/sdcard/Android/data/org.hackintosh1980.dashboard/files/ble_scan.json"
     else:
         return os.path.expanduser("~/vivosun-setup/blebridge_desktop/ble_scan.json")
@@ -42,17 +43,13 @@ class ChartManager:
         self._poll_event = None
         self._bridge_started = False
 
-        # --- Config laden ---
         self.cfg = config.load_config() or {}
         self.refresh_interval = float(self.cfg.get("refresh_interval", 4.0))
         self.chart_window     = int(self.cfg.get("chart_window", 120))
-        print(f"🌿 ChartManager init – Live, Poll={self.refresh_interval}s, Window={self.chart_window}")
+        print(f"🌿 ChartManager init – Poll={self.refresh_interval}s, Window={self.chart_window}")
 
-        # --- Graphs vorbereiten (dicke Linien) ---
-        for key in [
-            "tile_t_in", "tile_h_in", "tile_vpd_in",
-            "tile_t_out", "tile_h_out", "tile_vpd_out"
-        ]:
+        # Graphs vorbereiten
+        for key in ["tile_t_in","tile_h_in","tile_vpd_in","tile_t_out","tile_h_out","tile_vpd_out"]:
             tile = dashboard.ids.get(key)
             if not tile:
                 print(f"⚠️ Tile nicht gefunden: {key}")
@@ -63,42 +60,38 @@ class ChartManager:
             graph.add_plot(plot)
             self.plots[key] = plot
             self.buffers[key] = []
-
             if graph.ymax == graph.ymin:
-                graph.ymin = 0
-                graph.ymax = 1
+                graph.ymin, graph.ymax = 0, 1
 
-        # --- Bridge sicherstellen (Android), dann Poll starten ---
+        # Bridge sicherstellen (Android), dann Poll starten
         self._ensure_bridge_started()
         self.start_polling()
 
     # ----------------------------------------------------------
-    # Bridge-Autostart (nur Android; device_id optional setzen)
+    # Bridge-Autostart (robust)
     # ----------------------------------------------------------
     def _ensure_bridge_started(self):
         if platform != "android" or self._bridge_started:
             return
         try:
-            # Nur starten, wenn Live-Mode in config aktiv ist
-            live_cfg = config.load_config() or {}
-            if live_cfg.get("mode") != "live":
-                print("ℹ️ Live-Mode in config nicht aktiv → Bridge-Autostart übersprungen.")
-                return
-
             from jnius import autoclass
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
             ctx = PythonActivity.mActivity
             BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
 
+            live_cfg = config.load_config() or {}
+            dev = live_cfg.get("device_id")
+
             ret = BleBridgePersistent.start(ctx, "ble_scan.json")
             print(f"🚀 Bridge.start → {ret}")
 
-            # Aktive MAC setzen, falls Methode existiert
-            dev = live_cfg.get("device_id")
             try:
-                if dev and hasattr(BleBridgePersistent, "setActiveMac"):
+                if dev:
                     BleBridgePersistent.setActiveMac(dev)
-                    print(f"🎯 setActiveMac({dev}) OK")
+                    print(f"🎯 Aktive MAC gesetzt: {dev}")
+                else:
+                    BleBridgePersistent.setActiveMac(None)
+                    print("🔍 Vollscan (keine aktive MAC)")
             except Exception as e:
                 print("⚠️ setActiveMac fehlgeschlagen:", e)
 
@@ -111,16 +104,14 @@ class ChartManager:
     # Polling Lifecycle
     # ----------------------------------------------------------
     def start_polling(self):
-        """Startet oder reschedult den Poll-Loop."""
-        if hasattr(self, "_poll_event") and self._poll_event:
+        if self._poll_event:
             Clock.unschedule(self._poll_event)
         self.running = True
-        print(f"▶️ Starte Polling (Intervall {self.refresh_interval}s)")
+        print(f"▶️ Starte Polling ({self.refresh_interval}s)")
         self._poll_event = Clock.schedule_interval(self._poll_json, self.refresh_interval)
 
     def stop_polling(self):
-        """Stoppt den Poll-Loop."""
-        if hasattr(self, "_poll_event") and self._poll_event:
+        if self._poll_event:
             Clock.unschedule(self._poll_event)
             self._poll_event = None
         self.running = False
@@ -133,16 +124,16 @@ class ChartManager:
         if not self.running:
             return
         try:
-            # Device-ID dynamisch holen (Umschaltung erlauben)
+            # aktive device_id bestimmen (live wechselbar)
             device_id = None
             try:
                 device_id = getattr(config, "load_device_id", lambda: None)()
             except Exception:
-                device_id = None
+                pass
             if not device_id:
                 device_id = self.cfg.get("device_id")
 
-            # Datei prüfen
+            # Datei prüfen & laden
             if not os.path.exists(APP_JSON):
                 print(f"⚠️ JSON fehlt: {APP_JSON}")
                 self._set_no_data_labels()
@@ -151,23 +142,23 @@ class ChartManager:
             with open(APP_JSON, "r") as f:
                 content = f.read().strip()
             if not content:
-                print("⚠️ JSON aktuell leer (Schreibvorgang läuft).")
+                print("⚠️ JSON leer (Schreibvorgang?)")
                 self._set_no_data_labels()
                 return
 
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:
-                print("⚠️ JSON noch unvollständig – nächster Poll …")
+                print("⚠️ JSON unvollständig – nächster Poll …")
                 return
 
-            if not data or not isinstance(data, list):
+            if not isinstance(data, list) or not data:
                 print("⚠️ JSON leer oder ungültig.")
                 self._set_no_data_labels()
                 return
 
             if device_id:
-                data = [d for d in data if d.get("address") == device_id]
+                data = [d for d in data if (d.get("address") or d.get("mac")) == device_id]
                 if not data:
                     print(f"⚠️ Keine Daten für aktives Gerät {device_id}.")
                     self._set_no_data_labels()
@@ -192,7 +183,7 @@ class ChartManager:
                 "tile_vpd_out": vpd_out,
             }
 
-            # Charts & Labels updaten
+            # Charts & Labels
             for key, val in values.items():
                 self._append_value(key, val)
                 tile = self.dashboard.ids.get(key)
@@ -200,9 +191,8 @@ class ChartManager:
                     tile.ids.big.text = f"{val:.2f}"
                     self._auto_scale_y(tile.ids.g, key)
 
-            # Scatter-Fenster live aktualisieren, falls offen
+            # Scatter-Window nachziehen (falls offen)
             try:
-                from kivy.app import App
                 app = App.get_running_app()
                 if hasattr(app, "scatter_window") and app.scatter_window:
                     Clock.schedule_once(
@@ -210,6 +200,49 @@ class ChartManager:
                     )
             except Exception:
                 pass
+
+            # Header-Update + App-Status publizieren
+            try:
+                app = App.get_running_app()
+                dash = app.sm.get_screen("dashboard").children[0]
+                header = dash.ids.header
+
+                if not hasattr(self, "_header_cache"):
+                    self._header_cache = {"mac": None, "rssi": None}
+
+                mac = d.get("address") or d.get("mac") or self.cfg.get("device_id") or "--"
+                if mac and mac != self._header_cache["mac"]:
+                    header.ids.device_label.text = (
+                        f"[font=assets/fonts/fa-solid-900.ttf]\uf293[/font] {mac}"
+                    )
+                    self._header_cache["mac"] = mac
+
+                rssi = d.get("rssi")
+                if isinstance(rssi, (int, float)):
+                    self._header_cache["rssi"] = rssi
+                if self._header_cache["rssi"] is None:
+                    self._header_cache["rssi"] = -99
+
+                stable_rssi = self._header_cache["rssi"]
+                header.ids.rssi_value.text = f"{stable_rssi:.0f} dBm"
+                if stable_rssi > -60:
+                    col = (0.3, 1.0, 0.3, 1)
+                elif stable_rssi > -75:
+                    col = (0.9, 0.9, 0.3, 1)
+                else:
+                    col = (1.0, 0.4, 0.3, 1)
+                header.ids.rssi_value.color = col
+
+                # App-weit publizieren (für update_header in main)
+                try:
+                    app.current_mac = mac
+                    app.last_rssi = stable_rssi
+                    app.bt_active = True
+                except Exception:
+                    pass
+    
+            except Exception as e:
+                print("⚠️ Header-Update-Fehler:", e)
 
         except Exception as e:
             print("⚠️ Polling-Fehler:", e)
@@ -258,7 +291,6 @@ class ChartManager:
     # Reset & Config-Reload
     # ----------------------------------------------------------
     def reset_data(self):
-        """Daten zurücksetzen (Polling bleibt – alias VM/Android sicher)."""
         was_running = self.running
         if was_running and self._poll_event:
             Clock.unschedule(self._poll_event)

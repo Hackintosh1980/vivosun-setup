@@ -17,7 +17,7 @@ CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 DEFAULTS = {
     "device_id": None,
     "mode": "simulation",          # oder 'live'
-    "refresh_interval": 4.0,       # Sekunden zwischen Polls
+    "refresh_interval": 2.0,       # Sekunden zwischen Polls
     "poll_jitter": 0.3,            # Zufalls-Offset (optional)
     "chart_window": 120,           # Punkte im Chart
     "ui_scale": 0.85,              # Globales Scaling

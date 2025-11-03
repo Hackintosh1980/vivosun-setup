@@ -1,255 +1,235 @@
-# main.py — VIVOSUN Setup (Grid)
-# Live-Scanner mit hübschen Tiles, Auswahl speichert nach config.json
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+VIVOSUN Ultimate – Main App (First-Run Permission Popup, stabiler UI-Fix)
++ Stabiler MAC-Anzeige-Fix (Android/Desktop)
+© 2025 Dominik Rosenthal (Hackintosh1980)
+"""
 
 from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.label import Label
-from kivy.uix.button import Button
 from kivy.clock import Clock
 from kivy.core.window import Window
-from kivy.metrics import dp
-from kivy.uix.widget import Widget
-from kivy.properties import StringProperty, DictProperty
-import os, json, time
+from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
+from kivy.utils import platform
+from kivy.uix.popup import Popup
+from kivy.uix.label import Label
+import time, os, io, json
 
-from jnius import autoclass, PythonJavaClass, java_method, cast
-
-Window.clearcolor = (0, 0, 0, 1)
-
-
-# ---------- Android BLE Helpers ----------
-
-BluetoothManager = autoclass("android.bluetooth.BluetoothManager")
-BluetoothAdapter = autoclass("android.bluetooth.BluetoothAdapter")
-BluetoothLeScanner = autoclass("android.bluetooth.le.BluetoothLeScanner")
-ScanResult = autoclass("android.bluetooth.le.ScanResult")
-PythonActivity = autoclass("org.kivy.android.PythonActivity")
-
-class PyScanCallback(PythonJavaClass):
-    __javainterfaces__ = ['android/bluetooth/le/ScanCallback']
-    __javacontext__ = 'app'
-
-    def __init__(self, on_result):
-        super().__init__()
-        self.on_result = on_result
-
-    @java_method('(ILandroid/bluetooth/le/ScanResult;)V')
-    def onScanResult(self, callbackType, result):
-        try:
-            dev = result.getDevice()
-            name = dev.getName() or ""
-            addr = dev.getAddress() or ""
-            rssi = result.getRssi()
-            # nur ThermoBeacon / VIVOSUN etc. aber „alles zeigen“ = locker lassen:
-            if name == "" or not any(x in name.lower() for x in ['thermo', 'vivo', 'beacon']):
-                # trotzdem anzeigen? → Kommentar rausnehmen, wenn ALLES gelistet werden soll
-                pass
-            self.on_result(addr, name, rssi)
-        except Exception:
-            pass
-
-    @java_method('(Ljava/util/List;)V')
-    def onBatchScanResults(self, results):
-        try:
-            it = results.iterator()
-            while it.hasNext():
-                r = cast(ScanResult, it.next())
-                self.onScanResult(0, r)
-        except Exception:
-            pass
-
-    @java_method('(I)V')
-    def onScanFailed(self, errorCode):
-        # ignorieren; UI zeigt Status separat
-        pass
+from dashboard_gui import create_dashboard
+from dashboard_charts import ChartManager, APP_JSON
+from setup_screen import SetupScreen
+from vpd_scatter_window_full import VPDScatterWindow
+from permission_fix import check_permissions
+from settings_screen import SettingsScreen
+import config
 
 
-class BleLiveScanner:
-    def __init__(self):
-        self.ctx = PythonActivity.mActivity
-        bm = cast(BluetoothManager, self.ctx.getSystemService(self.ctx.BLUETOOTH_SERVICE))
-        self.adapter = bm.getAdapter()
-        self.scanner = self.adapter.getBluetoothLeScanner() if self.adapter else None
-        self.cb = PyScanCallback(self._on_result)
-        self.devices = {}  # addr -> {name, rssi, ts}
-
-    def _on_result(self, addr, name, rssi):
-        now = time.time()
-        self.devices[addr] = {"name": name or "(unbekannt)", "rssi": int(rssi), "ts": now}
-
-    def start(self):
-        if self.scanner:
-            try:
-                self.scanner.startScan(self.cb)
-                return True
-            except Exception:
-                return False
-        return False
-
-    def stop(self):
-        if self.scanner:
-            try:
-                self.scanner.stopScan(self.cb)
-            except Exception:
-                pass
-
-    def snapshot(self, max_age=8.0):
-        # veraltete Einträge entfernen
-        now = time.time()
-        stale = [a for a, d in self.devices.items() if now - d["ts"] > max_age]
-        for a in stale:
-            self.devices.pop(a, None)
-        # sortiere nach RSSI desc
-        items = sorted(self.devices.items(), key=lambda kv: kv[1]["rssi"], reverse=True)
-        return items
+# -------------------------------------------------------
+# Android-UI-Fix
+# -------------------------------------------------------
+def fix_android_ui():
+    def _stabilize(dt):
+        if Window.size[0] <= 1:
+            Clock.schedule_once(_stabilize, 0.15)
+            return
+        Window.softinput_mode = "pan"
+        Window.fullscreen = True
+        Window.size = Window.size
+        print("✅ Android-UI stabilisiert (Fullscreen + Softinput)")
+    Clock.schedule_once(_stabilize, 0.1)
 
 
-# ---------- UI ----------
-
-class Header(BoxLayout):
-    status = StringProperty("Scan läuft …")
-
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.orientation = 'vertical'
-        self.padding = dp(12)
-        self.spacing = dp(8)
-        title = Label(text="[b]VIVOSUN Setup[/b]", markup=True, font_size=dp(28),
-                      color=(0,1,0.7,1), size_hint_y=None, height=dp(36))
-        subtitle = Label(text=self.status, markup=True, font_size=dp(14),
-                         color=(0.6,0.9,1,1), size_hint_y=None, height=dp(22))
-        self.subtitle = subtitle
-        self.add_widget(title)
-        self.add_widget(subtitle)
-
-    def set_status(self, txt):
-        self.subtitle.text = txt
+class DashboardScreen(Screen):
+    pass
 
 
-class DeviceTile(Button):
-    addr = StringProperty("")
-    name = StringProperty("")
-    rssi = StringProperty("")
-
-    def __init__(self, on_pick, **kw):
-        super().__init__(**kw)
-        self.on_pick = on_pick
-        self.size_hint_y = None
-        self.height = dp(88)
-        self.background_normal = ''
-        self.background_down = ''
-        self.background_color = (0.1, 0.14, 0.16, 1)
-        self.color = (1,1,1,1)
-        self.markup = True
-        self.font_size = dp(16)
-        self.padding = dp(12)
-        self.halign = 'left'
-        self.valign = 'middle'
-        self.text = ""
-        self.bind(on_release=self._choose)
-
-    def refresh(self):
-        self.text = (
-            f"[b]{self.name}[/b]\n"
-            f"[color=#88ccff]{self.addr}[/color]   "
-            f"[color=#99ff99]RSSI {self.rssi} dBm[/color]"
-        )
-
-    def _choose(self, *a):
-        self.on_pick(self.addr, self.name)
-
-
-class DeviceGrid(GridLayout):
-    def __init__(self, on_pick, **kw):
-        super().__init__(**kw)
-        self.on_pick = on_pick
-        self.cols = 1
-        self.spacing = dp(8)
-        self.padding = dp(12)
-        self.size_hint_y = None
-        self.bind(minimum_height=self.setter('height'))
-        self.tiles = {}  # addr -> tile
-
-    def update(self, items):
-        current = set(self.tiles.keys())
-        seen = set(a for a, _ in items)
-
-        # remove gone
-        for addr in current - seen:
-            tile = self.tiles.pop(addr)
-            self.remove_widget(tile)
-
-        # add/update
-        for addr, info in items:
-            name = info["name"] or "(unbekannt)"
-            rssi = info["rssi"]
-            if addr not in self.tiles:
-                t = DeviceTile(self.on_pick)
-                t.addr = addr
-                t.name = name
-                t.rssi = str(rssi)
-                t.refresh()
-                self.tiles[addr] = t
-                self.add_widget(t)
-            else:
-                t = self.tiles[addr]
-                changed = False
-                if t.name != name:
-                    t.name = name; changed = True
-                if t.rssi != str(rssi):
-                    t.rssi = str(rssi); changed = True
-                if changed:
-                    t.refresh()
-
-
-# ---------- App ----------
-
-class SetupApp(App):
-    devices = DictProperty({})
-    CONFIG_NAME = "config.json"
+class VivosunApp(App):
+    """Hauptklasse für VIVOSUN Ultimate"""
 
     def build(self):
-        root = BoxLayout(orientation='vertical')
-        self.header = Header()
-        root.add_widget(self.header)
+        print("🌱 Starte VivosunApp …")
+        if platform == "android":
+            fix_android_ui()
 
-        self.grid = DeviceGrid(self.on_pick)
-        scroll = ScrollView(size_hint=(1,1))
-        scroll.add_widget(self.grid)
-        root.add_widget(scroll)
-
-        self.scanner = BleLiveScanner()
-
-        ok = self.scanner.start()
-        self.header.set_status("[color=#aaffaa]Scan gestartet[/color]" if ok else "[color=#ff7777]Scan fehlgeschlagen[/color]")
-
-        Clock.schedule_interval(self.refresh, 1.0)
-        return root
-
-    def on_stop(self):
-        self.scanner.stop()
-
-    def refresh(self, dt):
-        items = self.scanner.snapshot(max_age=8.0)
-        self.grid.update(items)
-        self.header.set_status(f"[color=#a0d8ff]{len(items)} Gerät(e) gefunden[/color]")
-
-    def on_pick(self, addr, name):
-        # Speichern in /data/user/0/<package>/files/config.json (user_data_dir)
-        data = {
-            "device_address": addr,
-            "device_name": name,
-            "saved_ts": int(time.time())
-        }
+        # ---------------------------------------------------
+        # Config laden / First-Run erkennen
+        # ---------------------------------------------------
         try:
-            path = os.path.join(self.user_data_dir, self.CONFIG_NAME)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            self.header.set_status(f"[color=#99ff99]Gespeichert:[/color] {name} • {addr}")
+            cfg = config.load_config()
+        except Exception:
+            cfg = {}
+        first_run = not cfg or not cfg.get("mode")
+        print("🆕 First-Run erkannt!" if first_run else "✅ Config vorhanden.")
+
+        self.sm = ScreenManager(transition=FadeTransition())
+
+        # ---------------------------------------------------
+        # Erststart → Setup Screen
+        # ---------------------------------------------------
+        if first_run:
+            self.sm.add_widget(SetupScreen(name="setup"))
+            self.sm.current = "setup"
+            Clock.schedule_interval(self.update_clock, 1)
+
+            if platform == "android":
+                Clock.schedule_once(self._show_permission_hint_safe, 1.0)
+                Clock.schedule_once(self._kickstart_bridge_first_run, 1.2)
+
+            return self.sm
+
+        # ---------------------------------------------------
+        # Normale Initialisierung
+        # ---------------------------------------------------
+        dash = DashboardScreen(name="dashboard")
+        dash.add_widget(create_dashboard())
+        self.sm.add_widget(dash)
+        self.sm.add_widget(SetupScreen(name="setup"))
+        self.sm.add_widget(SettingsScreen(name="settings"))
+
+        self.chart_mgr = ChartManager(dash.children[0])
+        Clock.schedule_interval(self.update_clock, 1)
+        Clock.schedule_interval(self.update_header, 1.0)
+
+        if platform == "android":
+            fix_android_ui()
+
+        return self.sm
+
+    # -------------------------------------------------------
+    # Popup bei fehlenden Berechtigungen
+    # -------------------------------------------------------
+    def _show_permission_hint_safe(self, *_):
+        if check_permissions():
+            print("✅ Permissions OK – kein Popup.")
+            return
+
+        msg = (
+            "⚠️ Bluetooth- oder Standortrechte fehlen.\n\n"
+            "Bitte öffne Android-Einstellungen → App-Berechtigungen → "
+            "Bluetooth & Standort aktivieren.\n\n"
+            "Danach App neu starten, um Geräte zu finden."
+        )
+        lbl = Label(text=msg, halign="center", valign="middle", text_size=(380, None))
+        popup = Popup(
+            title="Berechtigungen erforderlich",
+            content=lbl,
+            size_hint=(0.9, 0.55),
+            auto_dismiss=True,
+        )
+        popup.open()
+        print("⚠️ Erststart-Popup angezeigt – User muss Rechte manuell setzen.")
+
+    # -------------------------------------------------------
+    # Bridge-Autostart beim First-Run
+    # -------------------------------------------------------
+    def _kickstart_bridge_first_run(self, *_):
+        if platform != "android":
+            return
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            ctx = PythonActivity.mActivity
+            BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
+            ret = BleBridgePersistent.start(ctx, "ble_scan.json")
+            print(f"📡 Bridge gestartet → {ret}")
+
+            try:
+                BleBridgePersistent.setActiveMac(None)
+                print("🔍 Vollscan aktiv (keine MAC-Filterung)")
+            except Exception as e:
+                print(f"⚠️ setActiveMac(None) fehlgeschlagen: {e}")
+
+            if not os.path.exists(APP_JSON) or os.path.getsize(APP_JSON) < 2:
+                with io.open(APP_JSON, "w", encoding="utf-8") as f:
+                    f.write("[]")
+                print(f"🆕 Leere JSON angelegt: {APP_JSON}")
+
         except Exception as e:
-            self.header.set_status(f"[color=#ff7777]Save-Fehler:[/color] {e}")
+            print(f"💥 Fehler beim First-Run Bridge-Start: {e}")
+
+    # -------------------------------------------------------
+    # Uhr & Header (inkl. MAC-Anzeige-Fix)
+    # -------------------------------------------------------
+    def update_clock(self, *_):
+        now = time.strftime("%H:%M:%S")
+        try:
+            dash = self.sm.get_screen("dashboard").children[0]
+            dash.ids.header.ids.clocklbl.text = now
+        except Exception:
+            pass
+
+    def update_header(self, *_):
+        """Aktualisiert Bluetooth-Status + MAC-Adresse stabil"""
+        try:
+            dash = self.sm.get_screen("dashboard").children[0]
+            header = dash.ids.header
+
+            # Aktuelle MAC aus ChartManager oder JSON holen
+            mac = getattr(self, "current_mac", None)
+            if not mac:
+                try:
+                    if os.path.exists(APP_JSON):
+                        with open(APP_JSON, "r") as f:
+                            data = json.load(f)
+                        if isinstance(data, list) and len(data) > 0:
+                            mac = data[0].get("address") or "--"
+                except Exception:
+                    mac = "--"
+
+            # Fallback aus Config
+            if not mac or mac == "--":
+                cfg = getattr(self.chart_mgr, "cfg", {}) or {}
+                mac = cfg.get("device_id") or "--"
+
+            bt_active = getattr(self.chart_mgr, "_bridge_started", False)
+            icon = "\uf294" if bt_active else "\uf293"  # fa-bluetooth vs fa-bluetooth-b
+            color = (0.2, 1.0, 0.3, 1) if bt_active else (1.0, 0.4, 0.3, 1)
+
+            header.ids.device_label.text = (
+                f"[font=assets/fonts/fa-solid-900.ttf]{icon}[/font] {mac}"
+            )
+            header.ids.device_label.color = color
+
+        except Exception as e:
+            print(f"⚠️ update_header Fehler: {e}")
+
+    # -------------------------------------------------------
+    # Buttons
+    # -------------------------------------------------------
+    def on_scatter_pressed(self):
+        from kivy.uix.modalview import ModalView
+        popup = ModalView(size_hint=(1, 1), auto_dismiss=False)
+        popup.add_widget(VPDScatterWindow())
+        popup.open()
+
+    def on_setup_pressed(self):
+        self.sm.current = "setup"
+
+    def on_stop_pressed(self, button=None):
+        if not hasattr(self, "chart_mgr"):
+            return
+        running = getattr(self.chart_mgr, "running", True)
+        if running:
+            self.chart_mgr.stop_polling()
+            self.chart_mgr.running = False
+            if button:
+                button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04b[/font] Start"
+                button.background_color = (0.2, 0.6, 0.2, 1)
+        else:
+            self.chart_mgr.start_polling()
+            self.chart_mgr.running = True
+            if button:
+                button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04d[/font] Stop"
+                button.background_color = (0.6, 0.2, 0.2, 1)
+
+    def on_reset_pressed(self):
+        if hasattr(self, "chart_mgr"):
+            self.chart_mgr.reset_data()
+
+    def to_settings(self):
+        if "settings" in self.sm.screen_names:
+            self.sm.current = "settings"
+
 
 if __name__ == "__main__":
-    SetupApp().run()
+    VivosunApp().run()

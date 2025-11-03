@@ -1,6 +1,6 @@
 {
-  "device_id": "(unknown)",
-  "mode": "live",
+  "device_id": "D4:F9:8D:2B:AE:CE",
+  "mode": "simulation",
   "refresh_interval": 2.0,
   "poll_jitter": 0.3,
   "chart_window": 120,
