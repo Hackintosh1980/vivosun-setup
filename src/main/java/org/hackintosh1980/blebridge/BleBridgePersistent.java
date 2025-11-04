@@ -5,7 +5,6 @@ import android.bluetooth.le.*;
 import android.content.Context;
 import android.util.Log;
 import android.util.SparseArray;
-
 import org.json.*;
 
 import java.io.*;
@@ -13,11 +12,11 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 /**
- * ⚡ BleBridgePersistent – Echtzeit-Version mit aktiver MAC-Umschaltung
- *  - Unterstützt VSCTLE + ThermoBeacon2
- *  - Schnelles JSON-Update nur bei Änderungen
- *  - Unterstützt setActiveMac() zur Geräteselektion
- *  - Thread-safe & extrem niedrige Latenz
+ * 🌿 BleBridgePersistent – Ultimate Edition (2025-11)
+ *  - Echtzeit-Bridge mit aktivem MAC-Filter (setActiveMac)
+ *  - ThermoBeacon / VSCTLE kompatibel
+ *  - erkennt fehlende externe Sensoren → ext_present=false, Werte=-99.0
+ *  - JSON-Write nur bei Änderungen (50 ms debounce)
  */
 public class BleBridgePersistent {
 
@@ -36,15 +35,13 @@ public class BleBridgePersistent {
     private static final int COMPANY_ID = 0x0019;
     private static final int NEED_MIN = 2 + 6 + 2 + (2 * 4) + 1;
 
-    // ultraschnelle Scanfrequenz
     private static final long CHANGE_WRITE_MS = 50L;
     private static long lastWrite = 0L;
 
-    // aktive MAC, auf die gefiltert werden soll
     private static volatile String activeMac = null;
 
     // -----------------------------------------------------------
-    // Start / Stop
+    // Start
     // -----------------------------------------------------------
     public static String start(Context ctx, String outFileName) {
         try {
@@ -86,7 +83,7 @@ public class BleBridgePersistent {
                         int rssi = r.getRssi();
                         if (rssi < RSSI_MIN) return;
 
-                        // 👉 Nur das aktive Gerät durchlassen, falls gesetzt
+                        // Aktive MAC filtern
                         if (activeMac != null && !mac.equalsIgnoreCase(activeMac)) return;
 
                         ScanRecord rec = r.getScanRecord();
@@ -96,6 +93,7 @@ public class BleBridgePersistent {
 
                         byte[] payload = md.get(COMPANY_ID);
                         if (payload == null) {
+                            // Fallback: längstes MSD-Feld wählen
                             int bestLen = 0;
                             for (int i = 0; i < md.size(); i++) {
                                 byte[] p = md.valueAt(i);
@@ -127,10 +125,12 @@ public class BleBridgePersistent {
                         }
 
                         if (DEBUG)
-                            Log.i(TAG, "UPDATE " + mac + " Ti=" + j.optDouble("temperature_int")
+                            Log.i(TAG, "UPDATE " + mac
+                                    + " Ti=" + j.optDouble("temperature_int")
                                     + " Hi=" + j.optDouble("humidity_int")
                                     + " Te=" + j.optDouble("temperature_ext")
                                     + " He=" + j.optDouble("humidity_ext")
+                                    + " ext_present=" + j.optBoolean("ext_present")
                                     + " pkt=" + j.optInt("packet_counter"));
 
                     } catch (Throwable t) {
@@ -150,6 +150,9 @@ public class BleBridgePersistent {
         }
     }
 
+    // -----------------------------------------------------------
+    // Stop
+    // -----------------------------------------------------------
     public static String stop() {
         try {
             if (!running) return "NOT_RUNNING";
@@ -166,7 +169,7 @@ public class BleBridgePersistent {
     }
 
     // -----------------------------------------------------------
-    // Aktive MAC umschalten
+    // MAC-Filter
     // -----------------------------------------------------------
     public static void setActiveMac(String mac) {
         try {
@@ -182,12 +185,10 @@ public class BleBridgePersistent {
         }
     }
 
-    public static String getActiveMac() {
-        return activeMac;
-    }
+    public static String getActiveMac() { return activeMac; }
 
     // -----------------------------------------------------------
-    // JSON Write
+    // JSON-Write
     // -----------------------------------------------------------
     private static void writeSnapshot() {
         try {
@@ -205,7 +206,7 @@ public class BleBridgePersistent {
     }
 
     // -----------------------------------------------------------
-    // Decoder
+    // Decoder mit ext_present-Logik
     // -----------------------------------------------------------
     private static JSONObject decodeThermoBeaconLike(String name, String mac, int rssi, byte[] payload, String type) {
         try {
@@ -234,8 +235,15 @@ public class BleBridgePersistent {
             double T_e = te / 16.0;
             double H_e = he / 16.0;
 
-            if (!(T_i >= -40 && T_i <= 85 && T_e >= -40 && T_e <= 85
-                    && H_i >= 0 && H_i <= 110 && H_e >= 0 && H_e <= 110))
+            boolean extPresent = !(H_e <= 0.1 || H_e > 110.0 || Double.isNaN(H_e));
+
+            // wenn Sensor fehlt → Dummywerte
+            if (!extPresent) {
+                T_e = -99.0;
+                H_e = -99.0;
+            }
+
+            if (!(T_i >= -40 && T_i <= 85 && H_i >= 0 && H_i <= 110))
                 return null;
 
             JSONObject o = new JSONObject();
@@ -248,6 +256,7 @@ public class BleBridgePersistent {
             o.put("humidity_int", H_i);
             o.put("temperature_ext", T_e);
             o.put("humidity_ext", H_e);
+            o.put("ext_present", extPresent);
             o.put("packet_counter", pkt);
             return o;
 
