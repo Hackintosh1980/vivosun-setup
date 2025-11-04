@@ -18,6 +18,7 @@ from kivy_garden.graph import Graph
 from kivy.graphics import Color, Ellipse, Rectangle
 from kivy.core.text import LabelBase
 from kivy.metrics import dp
+from utils import calc_vpd
 # ---------------------------------------------------
 # Font Awesome Solid (für Icons) registrieren
 # ---------------------------------------------------
@@ -36,7 +37,7 @@ class VPDScatterWindow(FloatLayout):
         # ---------------------------------------------------
         # Hintergrundbild (nach hinten)
         # ---------------------------------------------------
-        self.bg = Image(source="assets/vpd_bg.png", allow_stretch=True, keep_ratio=False)
+        self.bg = Image(source="assets/vpd_bg.png", fit_mode="fill")
         self.add_widget(self.bg, index=0)
 
         # ---------------------------------------------------
@@ -142,8 +143,11 @@ class VPDScatterWindow(FloatLayout):
         r2, self.h_in_lbl  = row("\uf043", "H_in: --.-%",  (0.8, 1, 0.8, 1))   # tint (water)
         r3, self.t_out_lbl = row("\uf2c9", "T_out: --.-°C",(1, 0.9, 0.7, 1))
         r4, self.h_out_lbl = row("\uf043", "H_out: --.-%", (1, 0.9, 0.7, 1))
+        r5, self.vpd_in_lbl  = row("\uf06d", "VPD_in: --.-kPa", (0.8, 1, 0.8, 1))   # fa-fire
+        r6, self.vpd_out_lbl = row("\uf06d", "VPD_out: --.-kPa", (1, 0.9, 0.7, 1))
 
-        for w in (r1, r2, r3, r4):
+
+        for w in (r1, r2, r3, r4, r5, r6):
             self.live_box.add_widget(w)
         self.add_widget(self.live_box)
 
@@ -233,6 +237,10 @@ class VPDScatterWindow(FloatLayout):
             self.t_out_lbl.text = f"T_out: {t_ext:.1f}°C"
             self.h_out_lbl.text = f"H_out: {h_ext:.1f}%"
 
+            vpd_in  = calc_vpd(t_int, h_int)
+            vpd_out = calc_vpd(t_ext, h_ext)
+            self.vpd_in_lbl.text  = f"VPD_in: {vpd_in:.2f} kPa"
+            self.vpd_out_lbl.text = f"VPD_out: {vpd_out:.2f} kPa"
             # Punkte positionieren
             self._place_point(self.p1, t_int, h_int)
             self._place_point(self.p2, t_ext, h_ext)
@@ -268,6 +276,12 @@ class VPDScatterWindow(FloatLayout):
         self.h_in_lbl.text  = f"H_in: {h_int:.1f}%"
         self.t_out_lbl.text = f"T_out: {t_ext:.1f}°C"
         self.h_out_lbl.text = f"H_out: {h_ext:.1f}%"
+
+        vpd_in  = calc_vpd(t_int, h_int)
+        vpd_out = calc_vpd(t_ext, h_ext)
+        self.vpd_in_lbl.text  = f"VPD_in: {vpd_in:.2f} kPa"
+        self.vpd_out_lbl.text = f"VPD_out: {vpd_out:.2f} kPa"
+
         self._place_point(self.p1, t_int, h_int)
         self._place_point(self.p2, t_ext, h_ext)
         self.set_led(True)

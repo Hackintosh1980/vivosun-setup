@@ -109,14 +109,6 @@ class SetupScreen(Screen):
             background_color=(0.2, 0.4, 0.2, 1),
             on_release=lambda *_: self.load_device_list(force=True),
         )
-        btn_dashboard = Button(
-            markup=True,
-            text="[font=assets/fonts/fa-solid-900.ttf]\uf015[/font]  Dashboard",
-            font_size="18sp",
-            background_normal="",
-            background_color=(0.25, 0.45, 0.25, 1),
-            on_release=lambda *_: self.to_dashboard(),
-        )
         btn_settings = Button(
             markup=True,
             text="[font=assets/fonts/fa-solid-900.ttf]\uf013[/font]  Einstellungen",
@@ -125,9 +117,19 @@ class SetupScreen(Screen):
             background_color=(0.2, 0.3, 0.5, 1),
             on_release=lambda *_: self.to_settings(),
         )
+        btn_dashboard = Button(
+            markup=True,
+            text="[font=assets/fonts/fa-solid-900.ttf]\uf015[/font]  Dashboard",
+            font_size="18sp",
+            background_normal="",
+            background_color=(0.25, 0.45, 0.25, 1),
+            on_release=lambda *_: self.to_dashboard(),
+       
+        )
         btn_row.add_widget(btn_reload)
-        btn_row.add_widget(btn_dashboard)
         btn_row.add_widget(btn_settings)
+        btn_row.add_widget(btn_dashboard)
+        
 
         root.add_widget(self.title)
         root.add_widget(self.status)

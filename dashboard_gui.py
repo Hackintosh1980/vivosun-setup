@@ -49,7 +49,7 @@ KV = f"""
 <Header>:
     size_hint_y: None
     height: dp(38)
-    padding: dp(8)
+    padding: [dp(12), dp(8), dp(12), dp(8)]  # ⬅️ Extra links/rechts Padding
     spacing: dp(10)
     canvas.before:
         Color:
@@ -60,71 +60,64 @@ KV = f"""
 
     BoxLayout:
         orientation: "horizontal"
-        spacing: dp(12)
+        spacing: dp(10)
 
         # ---- Titel links ----
         Label:
             markup: True
-            text: "[font=assets/fonts/fa-solid-900.ttf]\\uf013[/font]  Thermo Dashboard v3.6"
+            text: "[font=FA]\\uf013[/font]  Thermo Dashboard v3.6"
             bold: True
             font_size: "13sp"
             color: 0.90, 1, 0.92, 1
             halign: "left"
             valign: "middle"
-            size_hint_x: 0.45
-
-        Widget:
-
-        # ---- Gerät + Bluetooth + RSSI rechts ----
-        BoxLayout:
-            orientation: "horizontal"
-            spacing: dp(8)
             size_hint_x: None
-            width: dp(230)
+            width: dp(220)  # ⬅️ Mehr Platz, verhindert Abschneiden
+            text_size: self.size
+            shorten: False
 
-            # Bluetooth + MAC
+        Widget:  # ⬅️ flexibler Spacer, schiebt Rest nach rechts
+
+        # ---- Gerät + Bluetooth ----
+        Label:
+            id: device_label
+            markup: True
+            text: "[font=FA]\\uf293[/font] --"
+            font_size: "12sp"
+            color: 0.7, 0.95, 1.0, 1
+            size_hint_x: None
+            width: dp(180)
+            halign: "right"
+            valign: "middle"
+            text_size: self.size
+
+        # ---- RSSI ----
+        BoxLayout:
+            id: rssi_box
+            orientation: "horizontal"
+            size_hint_x: None
+            width: dp(80)
+            spacing: dp(3)
             Label:
-                id: device_label
+                id: rssi_icon
                 markup: True
-                text: "[font=assets/fonts/fa-solid-900.ttf]\\uf293[/font]  --"
+                text: "[font=FA]\\uf012[/font]"
                 font_size: "12sp"
-                color: 0.7, 0.95, 1.0, 1
-                halign: "center"
-                valign: "middle"
+                color: 0.6, 0.9, 0.6, 1
                 size_hint_x: None
-                width: dp(130)
+                width: dp(14)
+            Label:
+                id: rssi_value
+                text: "-- dBm"
+                font_size: "11sp"
+                color: 0.7, 1.0, 0.8, 1
 
-            # Signal + RSSI
-            BoxLayout:
-                id: rssi_box
-                orientation: "horizontal"
-                spacing: dp(3)
-                size_hint_x: None
-                width: dp(65)
-
-                Label:
-                    id: rssi_icon
-                    markup: True
-                    text: "[font=assets/fonts/fa-solid-900.ttf]\\uf012[/font]"
-                    font_size: "12sp"
-                    color: 0.6, 0.9, 0.6, 1
-                    size_hint_x: None
-                    width: dp(14)
-
-                Label:
-                    id: rssi_value
-                    text: "-- dBm"
-                    font_size: "11sp"
-                    color: 0.7, 1.0, 0.8, 1
-                    halign: "left"
-                    valign: "middle"
-
-        # ---- Uhrzeit ganz rechts ----
+        # ---- Uhrzeit ----
         Label:
             id: clocklbl
             text: "00:00:00"
             size_hint_x: None
-            width: dp(70)
+            width: dp(80)
             font_size: "12sp"
             color: 0.8, 1.0, 0.85, 1
             halign: "right"

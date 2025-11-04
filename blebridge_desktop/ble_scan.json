@@ -1,1 +1,26 @@
-[{"humidity_int":46.5,"rssi":0,"address":"(unknown)","temperature_int":20.375,"humidity_ext":52.25,"temperature_ext":19.375,"name":"ThermoBeacon2","packet_counter":188},{"humidity_int":50.75,"rssi":0,"address":"(unknown)","temperature_int":19.75,"humidity_ext":49.9375,"temperature_ext":21.0,"name":"ThermoBeacon2","packet_counter":217},{"humidity_int":46.4375,"rssi":0,"address":"(unknown)","temperature_int":20.3125,"humidity_ext":52.4375,"temperature_ext":19.375,"name":"ThermoBeacon2","packet_counter":189},{"humidity_int":50.75,"rssi":0,"address":"(unknown)","temperature_int":19.75,"humidity_ext":49.9375,"temperature_ext":21.0,"name":"ThermoBeacon2","packet_counter":218},{"humidity_int":46.4375,"rssi":0,"address":"(unknown)","temperature_int":20.375,"humidity_ext":52.375,"temperature_ext":19.4375,"name":"ThermoBeacon2","packet_counter":190},{"humidity_int":50.75,"rssi":0,"address":"(unknown)","temperature_int":19.75,"humidity_ext":49.9375,"temperature_ext":21.0,"name":"ThermoBeacon2","packet_counter":219},{"humidity_int":46.5,"rssi":0,"address":"(unknown)","temperature_int":20.375,"humidity_ext":52.4375,"temperature_ext":19.25,"name":"ThermoBeacon2","packet_counter":191},{"humidity_int":50.75,"rssi":0,"address":"(unknown)","temperature_int":19.75,"humidity_ext":49.9375,"temperature_ext":21.0,"name":"ThermoBeacon2","packet_counter":220}]
+[
+  {
+    "timestamp": "2025-11-03T23:15:42.150+0000",
+    "name": "ThermoBeacon2",
+    "address": "D4:F9:8D:2B:AE:CE",
+    "rssi": -56,
+    "type": "sensor",
+    "temperature_int": 25.8,
+    "humidity_int": 48.2,
+    "temperature_ext": 24.9,
+    "humidity_ext": 49.5,
+    "packet_counter": 123
+  },
+  {
+    "timestamp": "2025-11-03T23:15:42.160+0000",
+    "name": "VSCTLE-Controller",
+    "address": "D8:91:2C:AA:1E:77",
+    "rssi": -64,
+    "type": "controller",
+    "temperature_int": 27.3,
+    "humidity_int": 45.1,
+    "temperature_ext": 26.2,
+    "humidity_ext": 46.4,
+    "packet_counter": 42
+  }
+]

@@ -168,6 +168,7 @@ class SettingsScreen(Screen):
     # 💾 Speichern
     def save_settings(self):
         try:
+            # 1️⃣ Config laden + schreiben
             cfg = config.load_config()
             cfg["mode"] = self.mode_spinner.text
             cfg["refresh_interval"] = round(float(self.poll_slider.value), 2)
@@ -178,14 +179,27 @@ class SettingsScreen(Screen):
             cfg["theme"] = self.theme_spinner.text
             config.save_config(cfg)
 
-            self.status_label.text = "[color=#00ffaa]💾 Gespeichert![/color]"
+            self.status_label.text = "[color=#00ffaa]💾 Gespeichert – wird angewendet …[/color]"
 
-            from dashboard_charts import ChartManager
-            Clock.schedule_once(lambda *_: ChartManager.reload_config, 0.1)
+            # 2️⃣ Zugriff auf App-Instanz
+            from kivy.app import App
+            app = App.get_running_app()
+
+            # 3️⃣ ChartManager sofort neu initialisieren
+            if hasattr(app, "chart_mgr"):
+                app.chart_mgr.reload_config()
+                print("♻️ Settings angewendet (ChartManager reload).")
+
+            # 4️⃣ Optional: UI-Scale sofort anwenden
+            try:
+                import dashboard_gui
+                dashboard_gui.UI_SCALE = cfg.get("ui_scale", 1.0)
+                print(f"🪄 UI-Scale geändert auf {dashboard_gui.UI_SCALE}")
+            except Exception as e:
+                print(f"⚠️ UI-Scale Update nicht möglich: {e}")
 
         except Exception as e:
             self.status_label.text = f"[color=#ff5555]❌ Fehler:[/color] {e}"
-
     def to_setup(self):
         if self.manager and "setup" in self.manager.screen_names:
             self.manager.current = "setup"
