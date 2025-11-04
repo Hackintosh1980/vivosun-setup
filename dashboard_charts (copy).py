@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ChartManager Deluxe – Auto 3/6 Tiles (extern erkennen + weich umschalten)
+ChartManager – Live-Only (Android-robust, Bridge-Autostart, Device-Switch fix,
+sauberes Start/Stop/Reset, dicke Linien bleiben)
 © 2025 Dominik Rosenthal (Hackintosh1980)
 """
 
 import os, json
 from kivy.clock import Clock
-from kivy.animation import Animation
 from kivy_garden.graph import LinePlot
 from kivy.utils import platform
-from kivy.metrics import dp
 from kivy.app import App
 import config, utils
 
@@ -44,44 +43,25 @@ class ChartManager:
         self._poll_event = None
         self._bridge_started = False
 
-        # Status-Flags
-        self.ext_present = None          # unbekannt am Start → erste Erkennung triggert Layout
-        self._header_cache = {"mac": None, "rssi": None}
-
-        # Config
         self.cfg = config.load_config() or {}
         self.refresh_interval = float(self.cfg.get("refresh_interval", 4.0))
         self.chart_window     = int(self.cfg.get("chart_window", 120))
         print(f"🌿 ChartManager init – Poll={self.refresh_interval}s, Window={self.chart_window}")
 
-        # Tiles vorbereiten (dicke Linien + Basisgrößen merken)
-        self._tile_keys_int = ["tile_t_in","tile_h_in","tile_vpd_in"]
-        self._tile_keys_ext = ["tile_t_out","tile_h_out","tile_vpd_out"]
-
-        for key in self._tile_keys_int + self._tile_keys_ext:
+        # Graphs vorbereiten
+        for key in ["tile_t_in","tile_h_in","tile_vpd_in","tile_t_out","tile_h_out","tile_vpd_out"]:
             tile = dashboard.ids.get(key)
             if not tile:
                 print(f"⚠️ Tile nicht gefunden: {key}")
                 continue
-
-            # Basis-Höhe zur Animation merken (einmalig)
-            if not hasattr(tile, "base_height") or not tile.base_height:
-                tile.base_height = tile.height if tile.height > 0 else dp(160)
-
             graph = tile.ids.g
             plot = LinePlot(color=(*tile.accent, 1))
             plot.line_width = 4.0
             graph.add_plot(plot)
             self.plots[key] = plot
             self.buffers[key] = []
-
-            # Y-Band initial
             if graph.ymax == graph.ymin:
                 graph.ymin, graph.ymax = 0, 1
-
-            # weiches Einblenden sicherstellen
-            tile.opacity = 1.0
-            tile.disabled = False
 
         # Bridge sicherstellen (Android), dann Poll starten
         self._ensure_bridge_started()
@@ -110,7 +90,6 @@ class ChartManager:
                     BleBridgePersistent.setActiveMac(dev)
                     print(f"🎯 Aktive MAC gesetzt: {dev}")
                 else:
-                    # Kein device_id → Vollscan erlauben (deine gewünschte Logik)
                     BleBridgePersistent.setActiveMac(None)
                     print("🔍 Vollscan (keine aktive MAC)")
             except Exception as e:
@@ -145,63 +124,56 @@ class ChartManager:
         if not self.running:
             return
         try:
-            # aktive device_id (stabil – kein Mac-Hopping, wenn gesetzt)
-            device_id = (getattr(config, "load_device_id", lambda: None)() or
-                         self.cfg.get("device_id"))
+            # aktive device_id bestimmen (live wechselbar)
+            device_id = None
+            try:
+                device_id = getattr(config, "load_device_id", lambda: None)()
+            except Exception:
+                pass
+            if not device_id:
+                device_id = self.cfg.get("device_id")
 
+            # Datei prüfen & laden
             if not os.path.exists(APP_JSON):
+                print(f"⚠️ JSON fehlt: {APP_JSON}")
                 self._set_no_data_labels()
                 return
 
             with open(APP_JSON, "r") as f:
                 content = f.read().strip()
             if not content:
+                print("⚠️ JSON leer (Schreibvorgang?)")
                 self._set_no_data_labels()
                 return
 
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:
-                # teilweise geschrieben → im nächsten Tick probieren
+                print("⚠️ JSON unvollständig – nächster Poll …")
                 return
 
             if not isinstance(data, list) or not data:
+                print("⚠️ JSON leer oder ungültig.")
                 self._set_no_data_labels()
                 return
 
-            # Device filtern
             if device_id:
                 data = [d for d in data if (d.get("address") or d.get("mac")) == device_id]
                 if not data:
+                    print(f"⚠️ Keine Daten für aktives Gerät {device_id}.")
                     self._set_no_data_labels()
                     return
-            else:
-                # Kein device_id → nimm bevorzugt Eintrag mit valider Messung
-                def _valid(d):
-                    return isinstance(d.get("humidity_int"), (int,float))
-                data = sorted(data, key=lambda d: 0 if _valid(d) else 1)
 
             d = data[0]
 
-            # Werte aus JSON
+            # Werte
             t_int = d.get("temperature_int", 0.0)
-            h_int = d.get("humidity_int", 0.0)
             t_ext = d.get("temperature_ext", 0.0)
+            h_int = d.get("humidity_int", 0.0)
             h_ext = d.get("humidity_ext", 0.0)
-
-            # VPD
             vpd_in  = utils.calc_vpd(t_int, h_int)
             vpd_out = utils.calc_vpd(t_ext, h_ext)
 
-            # 🌿 Externen Sensor zuverlässig erkennen
-            ext_now = self._detect_external_present(t_ext, h_ext)
-
-            # Erstmalige oder geänderte Erkennung → Layout umschalten
-            if self.ext_present is None or ext_now != self.ext_present:
-                self.ext_present = ext_now
-                self._apply_layout(ext_now)
-
-            # Charts & Labels aktualisieren
             values = {
                 "tile_t_in":   t_int,
                 "tile_h_in":   h_int,
@@ -211,6 +183,7 @@ class ChartManager:
                 "tile_vpd_out": vpd_out,
             }
 
+            # Charts & Labels
             for key, val in values.items():
                 self._append_value(key, val)
                 tile = self.dashboard.ids.get(key)
@@ -218,20 +191,24 @@ class ChartManager:
                     tile.ids.big.text = f"{val:.2f}"
                     self._auto_scale_y(tile.ids.g, key)
 
-            # Scatter aktualisieren, falls offen
+            # Scatter-Window nachziehen (falls offen)
             try:
                 app = App.get_running_app()
                 if hasattr(app, "scatter_window") and app.scatter_window:
-                    Clock.schedule_once(lambda dt: app.scatter_window.update_values(
-                        t_int, h_int, t_ext, h_ext))
+                    Clock.schedule_once(
+                        lambda dt: app.scatter_window.update_values(t_int, h_int, t_ext, h_ext)
+                    )
             except Exception:
                 pass
 
-            # Header-Update ruhig halten
+            # Header-Update + App-Status publizieren
             try:
                 app = App.get_running_app()
                 dash = app.sm.get_screen("dashboard").children[0]
                 header = dash.ids.header
+
+                if not hasattr(self, "_header_cache"):
+                    self._header_cache = {"mac": None, "rssi": None}
 
                 mac = d.get("address") or d.get("mac") or self.cfg.get("device_id") or "--"
                 if mac and mac != self._header_cache["mac"]:
@@ -256,85 +233,20 @@ class ChartManager:
                     col = (1.0, 0.4, 0.3, 1)
                 header.ids.rssi_value.color = col
 
-                # App-weit publizieren (falls main.update_header darauf zugreift)
+                # App-weit publizieren (für update_header in main)
                 try:
                     app.current_mac = mac
                     app.last_rssi = stable_rssi
                     app.bt_active = True
                 except Exception:
                     pass
-
+    
             except Exception as e:
                 print("⚠️ Header-Update-Fehler:", e)
 
         except Exception as e:
             print("⚠️ Polling-Fehler:", e)
             self._set_no_data_labels()
-
-    # ----------------------------------------------------------
-    # Externen Sensor erkennen
-    #   –99, None, t_ext < –50°C oder h_ext < 0  ⇒ NICHT präsent
-    # ----------------------------------------------------------
-    def _detect_external_present(self, t_ext, h_ext):
-        try:
-            if t_ext is None or h_ext is None:
-                return False
-            if isinstance(t_ext, (int, float)) and isinstance(h_ext, (int, float)):
-                if (t_ext == -99) or (h_ext == -99):
-                    return False
-                if (t_ext < -50) or (h_ext < 0):
-                    return False
-                return True
-        except Exception:
-            pass
-        return False
-
-    # ----------------------------------------------------------
-    # Layout weich umschalten (6 → 3 Tiles und zurück)
-    # ----------------------------------------------------------
-    def _apply_layout(self, ext_visible: bool):
-        grid = self.dashboard.ids.get("grid")
-        if not grid:
-            return
-
-        # Ziel-Grid
-        if ext_visible:
-            # 2 Reihen × 3 Spalten (alle 6 sichtbar)
-            grid.rows = 2
-            grid.cols = 3
-        else:
-            # 1 Reihe × 3 Spalten (nur interne sichtbar)
-            grid.rows = 1
-            grid.cols = 3
-
-        # externe Tiles animieren
-        self._toggle_external_tiles(ext_visible)
-
-    def _toggle_external_tiles(self, visible):
-        # externe
-        for key in self._tile_keys_ext:
-            tile = self.dashboard.ids.get(key)
-            if not tile:
-                continue
-            Animation.cancel_all(tile)
-            if visible:
-                tile.disabled = False
-                anim = Animation(opacity=1.0, height=tile.base_height, d=0.35)
-            else:
-                tile.disabled = True
-                anim = Animation(opacity=0.0, height=0, d=0.35)
-            anim.start(tile)
-
-        # interne leicht “atmen”, damit Layout clean neu verteilt
-        for key in self._tile_keys_int:
-            tile = self.dashboard.ids.get(key)
-            if not tile:
-                continue
-            Animation.cancel_all(tile)
-            # kleiner Nudge der Höhe, dann zurück → Grid re-layoutet sauber
-            h = tile.height if tile.height > 0 else tile.base_height
-            Animation(height=h + dp(1), d=0.05).start(tile)
-            Clock.schedule_once(lambda *_t, t=tile: setattr(t, "height", t.base_height), 0.08)
 
     # ----------------------------------------------------------
     # Helpers
@@ -370,8 +282,7 @@ class ChartManager:
             print(f"⚠️ Auto-Scale-Fehler ({key}):", e)
 
     def _set_no_data_labels(self):
-        for key in ["tile_t_in","tile_h_in","tile_vpd_in",
-                    "tile_t_out","tile_h_out","tile_vpd_out"]:
+        for key in ["tile_t_in","tile_h_in","tile_vpd_in","tile_t_out","tile_h_out","tile_vpd_out"]:
             tile = self.dashboard.ids.get(key)
             if tile:
                 tile.ids.big.text = "--"

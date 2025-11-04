@@ -199,13 +199,45 @@ class SetupScreen(Screen):
             self.status.text = f"[color=#ff5555]❌ Fehler beim Bridge-Start:[/color] {e}"
 
 
-    # ---------------------------------------------------------
-    # Geräte laden
+   # ---------------------------------------------------------
+    # Geräte laden + JSON-Leeren bei "Neu laden"
     # ---------------------------------------------------------
     def load_device_list(self, *args, force=False):
+        """
+        Lädt Geräteliste aus ble_scan.json.
+        Wenn force=True (Neu laden-Button), wird die Datei zuerst geleert.
+        """
         if self._cancel_evt and not force:
             return
         try:
+            # Wenn der Benutzer aktiv "Neu laden" drückt → Datei leeren
+            if force:
+                try:
+                    if os.path.exists(APP_JSON):
+                        with open(APP_JSON, "w") as f:
+                            f.write("[]")
+                        print(f"🧹 {APP_JSON} geleert.")
+                        self.status.text = "[color=#ffaa00]Scan-Datei geleert – Bridge schreibt neu…[/color]"
+                        # Bridge reaktivieren (Android)
+                        if platform == "android" and autoclass:
+                            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                            ctx = PythonActivity.mActivity
+                            BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
+                            BleBridgePersistent.setActiveMac(None)
+                            BleBridgePersistent.start(ctx, "ble_scan.json")
+                            print("🔁 Bridge-Neustart nach Reset.")
+                        else:
+                            # Desktop: einfach neu einlesen
+                            print("💻 Desktop-Datei wird neu erstellt.")
+                    else:
+                        os.makedirs(os.path.dirname(APP_JSON), exist_ok=True)
+                        with open(APP_JSON, "w") as f:
+                            f.write("[]")
+                        print(f"🆕 Neue Scan-Datei erstellt: {APP_JSON}")
+                except Exception as e:
+                    print("⚠️ Fehler beim Leeren:", e)
+
+            # Danach Liste ganz normal neu laden
             if not os.path.exists(APP_JSON):
                 self.status.text = "[color=#ffaa00]Noch keine Bridge-Daten…[/color]"
                 return
@@ -221,14 +253,15 @@ class SetupScreen(Screen):
                 self.status.text = "[color=#ffaa00]Suche läuft…[/color]"
                 return
 
+            # Geräteliste neu zeichnen
             self.list_container.clear_widgets()
             devices = {d.get("address", ""): d.get("name", "Unbekannt")
                        for d in data if d.get("address")}
-
             self.status.text = f"[color=#00ffaa]{len(devices)} Gerät(e) gefunden[/color]"
+
             for addr, name in devices.items():
                 btn = Button(
-                    text=f"[b]{name}[/b]\\n{addr}",
+                    text=f"[b]{name}[/b]\n{addr}",
                     markup=True,
                     size_hint_y=None,
                     height=dp_scaled(64),
@@ -250,17 +283,25 @@ class SetupScreen(Screen):
         try:
             config.save_device_id(addr)
             self.status.text = f"[color=#00ffaa]✅ Gespeichert:[/color] {addr}"
+            print(f"💾 Gerät gespeichert: {addr}")
+
             if platform == "android" and autoclass:
                 BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
                 BleBridgePersistent.setActiveMac(addr)
+                print(f"🎯 Aktive MAC gesetzt: {addr}")
+
             from kivy.app import App
             app = App.get_running_app()
-            if hasattr(app, "chart_mgr"):
+            if hasattr(app, "chart_mgr") and hasattr(app.chart_mgr, "reload_config"):
                 app.chart_mgr.reload_config()
-            Clock.schedule_once(lambda *_: self.to_dashboard(), 0.5)
-        except Exception as e:
-            self.status.text = f"[color=#ff5555]Fehler:[/color] {e}"
+            else:
+                print("ℹ️ ChartManager noch nicht aktiv – kein reload nötig.")
 
+            Clock.schedule_once(lambda *_: self.to_dashboard(), 0.4)
+
+        except Exception as e:
+            print("⚠️ Fehler beim Speichern:", e)
+            self.status.text = f"[color=#ff5555]Fehler:[/color] {e}"
 
     # ---------------------------------------------------------
     # Navigation

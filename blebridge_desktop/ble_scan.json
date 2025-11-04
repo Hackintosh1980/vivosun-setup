@@ -1,26 +1,26 @@
 [
   {
-    "timestamp": "2025-11-03T23:15:42.150+0000",
+    "timestamp": "2025-11-04T13:49:00.000+0000",
     "name": "ThermoBeacon2",
     "address": "D4:F9:8D:2B:AE:CE",
-    "rssi": -56,
+    "rssi": -79,
     "type": "sensor",
-    "temperature_int": 25.8,
-    "humidity_int": 48.2,
-    "temperature_ext": 24.9,
-    "humidity_ext": 49.5,
-    "packet_counter": 123
+    "temperature_int": 25.7,
+    "humidity_int": 20.0,
+    "temperature_ext": -99.0,
+    "humidity_ext": -99.0,
+    "packet_counter": 124
   },
   {
-    "timestamp": "2025-11-03T23:15:42.160+0000",
+    "timestamp": "2025-11-04T13:49:00.050+0000",
     "name": "VSCTLE-Controller",
     "address": "D8:91:2C:AA:1E:77",
-    "rssi": -64,
+    "rssi": -65,
     "type": "controller",
-    "temperature_int": 27.3,
-    "humidity_int": 45.1,
-    "temperature_ext": 26.2,
-    "humidity_ext": 46.4,
-    "packet_counter": 42
+    "temperature_int": 27.1,
+    "humidity_int": 45.0,
+    "temperature_ext": 26.0,
+    "humidity_ext": 46.2,
+    "packet_counter": 43
   }
 ]
