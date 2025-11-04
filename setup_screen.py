@@ -275,7 +275,7 @@ class SetupScreen(Screen):
         except Exception as e:
             self.status.text = f"[color=#ff8888]Fehler:[/color] {e}"
 
-
+   
     # ---------------------------------------------------------
     # Gerät speichern
     # ---------------------------------------------------------
@@ -292,10 +292,14 @@ class SetupScreen(Screen):
 
             from kivy.app import App
             app = App.get_running_app()
-            if hasattr(app, "chart_mgr") and hasattr(app.chart_mgr, "reload_config"):
-                app.chart_mgr.reload_config()
-            else:
-                print("ℹ️ ChartManager noch nicht aktiv – kein reload nötig.")
+
+            # 💫 Charts sofort zurücksetzen + reload
+            if hasattr(app, "chart_mgr"):
+                if hasattr(app.chart_mgr, "reset_data"):
+                    app.chart_mgr.reset_data()
+                    print("🧹 Chart-Daten nach Gerätewechsel zurückgesetzt")
+                if hasattr(app.chart_mgr, "reload_config"):
+                    app.chart_mgr.reload_config()
 
             Clock.schedule_once(lambda *_: self.to_dashboard(), 0.4)
 
