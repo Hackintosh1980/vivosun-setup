@@ -1,5 +1,5 @@
 {
-  "device_id": "A1:B2:C3:D4:E5:F6",
+  "device_id": "E4:F5:01:23:45:67",
   "mode": "simulation",
   "refresh_interval": 1.0,
   "poll_jitter": 0.3,

@@ -25,8 +25,11 @@ if platform == "android":
 else:
     UI_SCALE = 1.0
 
-def sp_scaled(v): return f"{int(v * UI_SCALE)}sp"
-def dp_scaled(v): return dp(v * UI_SCALE)
+def sp_scaled(v): 
+    return f"{int(v * UI_SCALE)}sp"
+
+def dp_scaled(v): 
+    return dp(v * UI_SCALE)
 
 
 # -------------------------------------------------------
@@ -49,7 +52,7 @@ KV = f"""
 <Header>:
     size_hint_y: None
     height: dp(38)
-    padding: [dp(12), dp(8), dp(12), dp(8)]  # ⬅️ Extra links/rechts Padding
+    padding: [dp(12), dp(8), dp(12), dp(8)]
     spacing: dp(10)
     canvas.before:
         Color:
@@ -72,17 +75,17 @@ KV = f"""
             halign: "left"
             valign: "middle"
             size_hint_x: None
-            width: dp(220)  # ⬅️ Mehr Platz, verhindert Abschneiden
+            width: dp(220)
             text_size: self.size
             shorten: False
 
-        Widget:  # ⬅️ flexibler Spacer, schiebt Rest nach rechts
+        Widget:
 
         # ---- Gerät + Bluetooth ----
         Label:
             id: device_label
             markup: True
-            text: "[font=FA]\\uf293[/font] --"
+            text: "[font=FA]\\uf294[/font] --"
             font_size: "12sp"
             color: 0.7, 0.95, 1.0, 1
             size_hint_x: None
@@ -122,6 +125,7 @@ KV = f"""
             color: 0.8, 1.0, 0.85, 1
             halign: "right"
             valign: "middle"
+
 
 <Tile>:
     orientation: "vertical"
@@ -193,42 +197,47 @@ KV = f"""
 
         Tile:
             id: tile_t_in
+            tile_key: "tile_t_in"
             title: "[font=FA]\\uf2c9[/font]  Temp In"
             ymin: 10
             ymax: 40
             accent: 1, 0.45, 0.45
         Tile:
             id: tile_h_in
+            tile_key: "tile_h_in"
             title: "[font=FA]\\uf043[/font]  Hum In"
             ymin: 20
             ymax: 100
             accent: 0.35, 0.70, 1
         Tile:
             id: tile_vpd_in
+            tile_key: "tile_vpd_in"
             title: "[font=FA]\\uf06d[/font]  VPD In"
             ymin: 0
             ymax: 2.0
             accent: 0.85, 1.0, 0.45
         Tile:
             id: tile_t_out
+            tile_key: "tile_t_out"
             title: "[font=FA]\\uf2c9[/font]  Temp Out"
             ymin: -5
             ymax: 45
             accent: 1.0, 0.70, 0.35
         Tile:
             id: tile_h_out
+            tile_key: "tile_h_out"
             title: "[font=FA]\\uf043[/font]  Hum Out"
             ymin: 15
             ymax: 100
             accent: 0.45, 0.95, 1.0
         Tile:
             id: tile_vpd_out
+            tile_key: "tile_vpd_out"
             title: "[font=FA]\\uf06d[/font]  VPD Out"
             ymin: 0
             ymax: 2.0
             accent: 0.60, 1.0, 0.60
 
-    # ---- Controlbar ----
     BoxLayout:
         id: controlbar
         size_hint_y: None
@@ -288,6 +297,24 @@ class Tile(BoxLayout):
     ymax = NumericProperty(100)
     accent = ListProperty([0.8, 1.0, 0.6])
 
+    # NEU: eigener Schlüssel für Enlarged
+    tile_key = StringProperty("")
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            try:
+                from kivy.app import App
+                from kivy.uix.modalview import ModalView
+                from enlarged_chart_window import EnlargedChartWindow
+                app = App.get_running_app()
+                popup = ModalView(size_hint=(1, 1), auto_dismiss=False)
+                # WICHTIG: start_key aus tile_key, NICHT self.id
+                popup.add_widget(EnlargedChartWindow(app.chart_mgr, start_key=self.tile_key))
+                popup.open()
+                print(f"🔍 Enlarged geöffnet für Tile: {self.tile_key}")
+            except Exception as e:
+                print(f"⚠️ Enlarged-Open-Fehler ({self.tile_key}): {e}")
+        return super().on_touch_down(touch)
 
 class Dashboard(BoxLayout):
     """Dashboard mit Auto-Bridge-Start (einmalig beim Anzeigen)"""
