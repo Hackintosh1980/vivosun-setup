@@ -85,3 +85,23 @@ def load_device_id() -> str | None:
     except Exception as e:
         print("⚠️ Fehler beim Laden der device_id:", e)
         return None
+# -------------------------------------------------------------
+# 🌡️ Temperature Unit (°C / °F)
+# -------------------------------------------------------------
+def get_unit():
+    """Liest die Temperatureinheit aus der Config (°C oder °F)."""
+    try:
+        cfg = load_config()
+        return cfg.get("unit", "°C")
+    except Exception:
+        return "°C"
+
+def toggle_unit():
+    """Wechselt zwischen °C und °F, speichert und gibt neue Einheit zurück."""
+    cfg = load_config()
+    current = cfg.get("unit", "°C")
+    new_unit = "°F" if current == "°C" else "°C"
+    cfg["unit"] = new_unit
+    save_config(cfg)
+    print(f"🌡️ Einheit umgeschaltet → {new_unit}")
+    return new_unit

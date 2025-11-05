@@ -3,6 +3,9 @@
 import math
 import config
 
+# -------------------------------------------------------
+# 🌿 VPD-Berechnung mit Leaf-Offset
+# -------------------------------------------------------
 def calc_vpd(temp_c: float, rh: float) -> float:
     """
     Berechnet den VPD (kPa) mit Leaf-Offset aus config.json.
@@ -25,3 +28,37 @@ def calc_vpd(temp_c: float, rh: float) -> float:
     vpd = es - ea
 
     return round(vpd, 2)
+
+
+# -------------------------------------------------------
+# 🌡 Temperatur-Konvertierung °C ↔ °F
+# -------------------------------------------------------
+def convert_temperature(value, mode="C"):
+    """Konvertiert Temperatur von °C nach °F (oder bleibt °C)."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (ValueError, TypeError):
+        return value
+    if mode.upper() == "F":
+        return v * 9 / 5 + 32
+    return v
+
+
+# -------------------------------------------------------
+# 🌍 Einheitliches Interface für alle Module
+# -------------------------------------------------------
+def convert_unit(value):
+    """
+    Liest die aktuelle Einheit aus config.json und wendet sie an.
+    Beispiel: Dashboard & Charts zeigen Werte direkt in der eingestellten Einheit.
+    """
+    try:
+        cfg = config.load_config()
+        unit = cfg.get("unit", "°C")
+        if "F" in unit.upper():
+            return convert_temperature(value, "F")
+    except Exception:
+        pass
+    return convert_temperature(value, "C")

@@ -15,6 +15,26 @@ from kivy.app import App
 import config, utils
 
 # ----------------------------------------------------------
+# 🌿 Einheitliche Utility-Funktion für Einheiten  (REPLACE THIS BLOCK)
+# ----------------------------------------------------------
+def get_unit_for_key(key: str) -> str:
+    """Gibt die passende Einheit je nach Tile-Key zurück (liest 'unit' aus config.json)."""
+    try:
+        cfg = config.load_config() or {}
+        unit_str = str(cfg.get("unit", "°C"))
+        is_f = "F" in unit_str.upper()
+    except Exception:
+        is_f = False
+
+    if key.startswith("tile_t_"):
+        return "°F" if is_f else "°C"
+    if key.startswith("tile_h_"):
+        return "%"
+    if key.startswith("tile_vpd_"):
+        return "kPa"
+    return ""
+
+# ----------------------------------------------------------
 # APP_JSON robust ermitteln
 # ----------------------------------------------------------
 def _resolve_app_json():
@@ -162,7 +182,6 @@ class ChartManager:
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:
-                # teilweise geschrieben → im nächsten Tick probieren
                 return
 
             if not isinstance(data, list) or not data:
@@ -176,46 +195,60 @@ class ChartManager:
                     self._set_no_data_labels()
                     return
             else:
-                # Kein device_id → nimm bevorzugt Eintrag mit valider Messung
                 def _valid(d):
-                    return isinstance(d.get("humidity_int"), (int,float))
+                    return isinstance(d.get("humidity_int"), (int, float))
                 data = sorted(data, key=lambda d: 0 if _valid(d) else 1)
 
             d = data[0]
 
-            # Werte aus JSON
-            t_int = d.get("temperature_int", 0.0)
-            h_int = d.get("humidity_int", 0.0)
-            t_ext = d.get("temperature_ext", 0.0)
-            h_ext = d.get("humidity_ext", 0.0)
+            # --- Rohwerte in °C laden ---
+            t_int_c = d.get("temperature_int", 0.0)
+            t_ext_c = d.get("temperature_ext", 0.0)
+            h_int   = d.get("humidity_int", 0.0)
+            h_ext   = d.get("humidity_ext", 0.0)
 
-            # VPD
-            vpd_in  = utils.calc_vpd(t_int, h_int)
-            vpd_out = utils.calc_vpd(t_ext, h_ext)
-
-            # 🌿 Externen Sensor zuverlässig erkennen
-            ext_now = self._detect_external_present(t_ext, h_ext)
-
-            # Erstmalige oder geänderte Erkennung → Layout umschalten
+            # 🌿 externen Sensor erkennen (vor Umrechnung!)
+            ext_now = self._detect_external_present(t_ext_c, h_ext)
             if self.ext_present is None or ext_now != self.ext_present:
                 self.ext_present = ext_now
                 self._apply_layout(ext_now)
 
+            # 🧮 VPD immer in °C berechnen
+            vpd_in  = utils.calc_vpd(t_int_c, h_int)
+            vpd_out = utils.calc_vpd(t_ext_c, h_ext)
+
+            # 🌡 Einheit aus config lesen
+            try:
+                cfg = config.load_config() or {}
+                unit_str = str(cfg.get("unit", "°C"))
+                is_f = "F" in unit_str.upper()
+            except Exception:
+                is_f = False
+
+            from utils import convert_temperature
+            if is_f:
+                t_int_disp = convert_temperature(t_int_c, "F")
+                t_ext_disp = convert_temperature(t_ext_c, "F")
+            else:
+                t_int_disp = t_int_c
+                t_ext_disp = t_ext_c
+
             # Charts & Labels aktualisieren
             values = {
-                "tile_t_in":   t_int,
+                "tile_t_in":   t_int_disp,
                 "tile_h_in":   h_int,
                 "tile_vpd_in": vpd_in,
-                "tile_t_out":  t_ext,
+                "tile_t_out":  t_ext_disp,
                 "tile_h_out":  h_ext,
                 "tile_vpd_out": vpd_out,
             }
-
             for key, val in values.items():
                 self._append_value(key, val)
                 tile = self.dashboard.ids.get(key)
                 if tile:
-                    tile.ids.big.text = f"{val:.2f}"
+                    from dashboard_charts import get_unit_for_key
+                    unit = get_unit_for_key(key)
+                    tile.ids.big.text = f"{val:.2f} {unit}" if unit else f"{val:.2f}"
                     self._auto_scale_y(tile.ids.g, key)
 
             # Scatter aktualisieren, falls offen

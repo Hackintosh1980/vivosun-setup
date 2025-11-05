@@ -174,15 +174,32 @@ class EnlargedChartWindow(BoxLayout):
     def _safe_index(self, key):
         return self._allowed.index(key) if key in self._allowed else 0
 
-    def _unit(self, key): return TITLE_MAP.get(key, ("", ""))[1]
-    def _title(self, key): return TITLE_MAP.get(key, (key, ""))[0]
+    def _unit(self, key):
+        """Einheit dynamisch aus config.json lesen (°C ↔ °F, %, kPa)."""
+        try:
+            import config
+            cfg = config.load_config()
+            mode = cfg.get("unit", "°C")
+        except Exception:
+            mode = "°C"
+        if key.startswith("tile_t_"):
+            return "°F" if mode == "°F" else "°C"
+        if key.startswith("tile_h_"):
+            return "%"
+        if key.startswith("tile_vpd_"):
+            return "kPa"
+        return ""
+
+    def _title(self, key):
+        return TITLE_MAP.get(key, (key, ""))[0]
 
     # ---------------------------------------------------
     # Titel, Farben und Linien-Stil aktualisieren (Dashboard-Schema)
     # ---------------------------------------------------
     def _refresh_titles_and_colors(self):
         """Setzt Titel, Einheit, Plotfarbe und Linienbreite nach Dashboard-Farbschema."""
-        title, unit = TITLE_MAP.get(self.tile_key, (self.tile_key, ""))
+        title, _ = TITLE_MAP.get(self.tile_key, (self.tile_key, ""))
+        unit = self._unit(self.tile_key)
         self._title_lbl.text = f"[b]{title}[/b]"
         self.graph.ylabel = f"{title} ({unit})" if unit else title
 
@@ -217,6 +234,7 @@ class EnlargedChartWindow(BoxLayout):
         # --- Titel- und Wert-Farben leicht getönt für Harmonie ---
         self._title_lbl.color = (rgb[0]*0.9, rgb[1], rgb[2]*0.9, 1)
         self._value_lbl.color = (rgb[0]*0.9 + 0.1, rgb[1]*0.95 + 0.05, rgb[2]*0.9 + 0.1, 1)
+
     # ---------------------------------------------------
     # Daten anzeigen
     # ---------------------------------------------------
