@@ -76,13 +76,36 @@ class SetupScreen(Screen):
         self._bridge_started = False
 
     def on_enter(self, *args):
+        """Wird aufgerufen, wenn der Setup-Screen aktiviert wird."""
         self._cancel_evt = False
         self.build_ui()
+
+        # Hardware-Monitor-Löschschutz aktivieren (keine JSON-Resets während Setup)
+        try:
+            from kivy.app import App
+            app = App.get_running_app()
+            if hasattr(app, "hw"):
+                app.hw.suspend_clear = True
+                print("🛑 Hardware-Monitor: JSON-Clear während Setup deaktiviert")
+        except Exception as e:
+            print("⚠️ suspend_clear setzen fehlgeschlagen:", e)
+
         Clock.schedule_once(self.start_bridge, 0.8)
         Clock.schedule_interval(self.load_device_list, 5)
 
     def on_leave(self, *args):
+        """Wird aufgerufen, wenn der Setup-Screen verlassen wird."""
         self._cancel_evt = True
+
+        # Hardware-Monitor-Clear wieder erlauben
+        try:
+            from kivy.app import App
+            app = App.get_running_app()
+            if hasattr(app, "hw"):
+                app.hw.suspend_clear = False
+                print("✅ Hardware-Monitor: JSON-Clear wieder aktiv")
+        except Exception as e:
+            print("⚠️ suspend_clear Rücksetzung fehlgeschlagen:", e)
 
 
     # ---------------------------------------------------------
@@ -199,45 +222,80 @@ class SetupScreen(Screen):
             self.status.text = f"[color=#ff5555]❌ Fehler beim Bridge-Start:[/color] {e}"
 
 
-   # ---------------------------------------------------------
+    # ---------------------------------------------------------
     # Geräte laden + JSON-Leeren bei "Neu laden"
     # ---------------------------------------------------------
     def load_device_list(self, *args, force=False):
         """
         Lädt Geräteliste aus ble_scan.json.
-        Wenn force=True (Neu laden-Button), wird die Datei zuerst geleert.
+        Wenn force=True (Neu laden-Button), werden alle Caches geleert:
+          • Datei-Inhalt
+          • Java-Bridge-Cache
+          • Chart-Daten im Dashboard
         """
         if self._cancel_evt and not force:
             return
         try:
-            # Wenn der Benutzer aktiv "Neu laden" drückt → Datei leeren
             if force:
+                # 1️⃣ UI sofort leeren
+                self.list_container.clear_widgets()
+                self.status.text = "[color=#ffaa00]🔄 Scanne neu – bitte warten…[/color]"
+                self.list_container.height = dp_scaled(10)
+
+                # 2️⃣ JSON löschen / neu erstellen
                 try:
                     if os.path.exists(APP_JSON):
                         with open(APP_JSON, "w") as f:
                             f.write("[]")
                         print(f"🧹 {APP_JSON} geleert.")
-                        self.status.text = "[color=#ffaa00]Scan-Datei geleert – Bridge schreibt neu…[/color]"
-                        # Bridge reaktivieren (Android)
-                        if platform == "android" and autoclass:
-                            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-                            ctx = PythonActivity.mActivity
-                            BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
-                            BleBridgePersistent.setActiveMac(None)
-                            BleBridgePersistent.start(ctx, "ble_scan.json")
-                            print("🔁 Bridge-Neustart nach Reset.")
-                        else:
-                            # Desktop: einfach neu einlesen
-                            print("💻 Desktop-Datei wird neu erstellt.")
                     else:
                         os.makedirs(os.path.dirname(APP_JSON), exist_ok=True)
                         with open(APP_JSON, "w") as f:
                             f.write("[]")
                         print(f"🆕 Neue Scan-Datei erstellt: {APP_JSON}")
                 except Exception as e:
-                    print("⚠️ Fehler beim Leeren:", e)
+                    print("⚠️ JSON-Reset-Fehler:", e)
 
-            # Danach Liste ganz normal neu laden
+                # 3️⃣ Bridge-Reset + Fullscan erzwingen
+                if platform == "android" and autoclass:
+                    try:
+                        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                        ctx = PythonActivity.mActivity
+                        BleBridgePersistent = autoclass("org.hackintosh1980.blebridge.BleBridgePersistent")
+
+                        # Bridge vollständig stoppen und Cache löschen
+                        try:
+                            BleBridgePersistent.clearCache()
+                            print("🧹 Java-Bridge-Cache geleert.")
+                        except Exception as e:
+                            print("⚠️ clearCache() nicht verfügbar oder Fehler:", e)
+
+
+                        # Neu starten + Fullscan aktivieren
+                        Clock.schedule_once(lambda *_: BleBridgePersistent.start(ctx, "ble_scan.json"), 1.0)
+                        Clock.schedule_once(lambda *_: BleBridgePersistent.setActiveMac(None), 1.5)
+                        print("🔁 Bridge neu initialisiert + Fullscan gestartet.")
+                    except Exception as e:
+                        print("⚠️ Bridge-Reset-Fehler:", e)
+
+
+                # 4️⃣ Chart-Daten leeren
+                try:
+                    from kivy.app import App
+                    app = App.get_running_app()
+                    if hasattr(app, "chart_mgr") and hasattr(app.chart_mgr, "reset_data"):
+                        app.chart_mgr.reset_data()
+                        print("🧹 ChartManager-Buffer geleert.")
+                except Exception as e:
+                    print("⚠️ ChartManager-Reset-Fehler:", e)
+
+                # 5️⃣ Nach kurzer Pause neu laden
+                Clock.schedule_once(lambda *_: self.load_device_list(force=False), 1.2)
+                return
+
+            # -------------------------------------------------
+            # Normaler Ladevorgang
+            # -------------------------------------------------
             if not os.path.exists(APP_JSON):
                 self.status.text = "[color=#ffaa00]Noch keine Bridge-Daten…[/color]"
                 return
@@ -253,12 +311,13 @@ class SetupScreen(Screen):
                 self.status.text = "[color=#ffaa00]Suche läuft…[/color]"
                 return
 
-            # Geräteliste neu zeichnen
-            self.list_container.clear_widgets()
+            # Duplikate + alte Devices filtern
             devices = {d.get("address", ""): d.get("name", "Unbekannt")
                        for d in data if d.get("address")}
             self.status.text = f"[color=#00ffaa]{len(devices)} Gerät(e) gefunden[/color]"
 
+            # Alte Widgets leeren & neue Buttons erzeugen
+            self.list_container.clear_widgets()
             for addr, name in devices.items():
                 btn = Button(
                     text=f"[b]{name}[/b]\n{addr}",
@@ -274,8 +333,6 @@ class SetupScreen(Screen):
 
         except Exception as e:
             self.status.text = f"[color=#ff8888]Fehler:[/color] {e}"
-
-   
     # ---------------------------------------------------------
     # Gerät speichern
     # ---------------------------------------------------------
@@ -315,5 +372,6 @@ class SetupScreen(Screen):
             self.manager.current = "dashboard"
 
     def to_settings(self):
+        """Springt in den Einstellungsbildschirm."""
         if self.manager and "settings" in self.manager.screen_names:
             self.manager.current = "settings"
