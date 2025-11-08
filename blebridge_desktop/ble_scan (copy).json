@@ -1,0 +1,74 @@
+[
+  {
+    "timestamp": "2025-11-04T14:59:50.000+0000",
+    "name": "ThermoBeacon2",
+    "address": "D4:F9:8D:2B:AE:CE",
+    "rssi": -56,
+    "type": "sensor",
+    "temperature_int": 20.81,
+    "humidity_int": 53.12,
+    "temperature_ext": 19.63,
+    "humidity_ext": 56.38,
+    "packet_counter": 414
+  },
+  {
+    "timestamp": "2025-11-04T14:59:51.200+0000",
+    "name": "ThermoBeacon2 (no-ext)",
+    "address": "A1:B2:C3:D4:E5:F6",
+    "rssi": -72,
+    "type": "sensor",
+    "temperature_int": 19.25,
+    "humidity_int": 48.50,
+    "temperature_ext": -99,
+    "humidity_ext": -99,
+    "packet_counter": 98
+  },
+  {
+    "timestamp": "2025-11-04T14:59:52.300+0000",
+    "name": "VSCTLE-Controller",
+    "address": "D8:91:2C:AA:1E:77",
+    "rssi": -64,
+    "type": "controller",
+    "temperature_int": 27.30,
+    "humidity_int": 45.10,
+    "temperature_ext": 26.20,
+    "humidity_ext": 46.40,
+    "packet_counter": 42
+  },
+  {
+    "timestamp": "2025-11-04T14:59:53.400+0000",
+    "name": "ThermoBeacon2 (fridge)",
+    "address": "F0:F1:00:00:06:19",
+    "rssi": -79,
+    "type": "sensor",
+    "temperature_int": -6.06,
+    "humidity_int": 25.50,
+    "temperature_ext": -99,
+    "humidity_ext": -99,
+    "packet_counter": 512
+  },
+  {
+    "timestamp": "2025-11-04T14:59:54.500+0000",
+    "name": "ThermoBeacon2 (garden)",
+    "address": "C2:3D:4E:5F:6A:7B",
+    "rssi": -50,
+    "type": "sensor",
+    "temperature_int": 24.95,
+    "humidity_int": 49.10,
+    "temperature_ext": 24.88,
+    "humidity_ext": 50.02,
+    "packet_counter": 223
+  },
+  {
+    "timestamp": "2025-11-04T14:59:55.600+0000",
+    "name": "VSCTLE-Controller-2",
+    "address": "E4:F5:01:23:45:67",
+    "rssi": -61,
+    "type": "controller",
+    "temperature_int": 21.40,
+    "humidity_int": 52.30,
+    "temperature_ext": 20.91,
+    "humidity_ext": 53.00,
+    "packet_counter": 305
+  }
+]
