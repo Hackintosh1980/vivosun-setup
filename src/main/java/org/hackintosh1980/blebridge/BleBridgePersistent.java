@@ -12,11 +12,11 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 /**
- * 🌿 BleBridgePersistent – Ultimate Edition (2025-11)
- *  - Echtzeit-Bridge mit aktivem MAC-Filter (setActiveMac)
- *  - ThermoBeacon / VSCTLE kompatibel
- *  - erkennt fehlende externe Sensoren → ext_present=false, Werte=-99.0
- *  - JSON-Write nur bei Änderungen (50 ms debounce)
+ * 🌿 BleBridgePersistent – Alive/Timeout Edition (2025-11)
+ *  - erkennt, wenn Datenpakete ausbleiben
+ *  - ersetzt Werte durch -99.0 und setzt alive=false / status="stale"
+ *  - aktualisiert JSON trotzdem regelmäßig
+ *  - voll Logcat-kompatibel, keine destruktiven Writes
  */
 public class BleBridgePersistent {
 
@@ -30,12 +30,15 @@ public class BleBridgePersistent {
 
     private static final Object lock = new Object();
     private static final Map<String, JSONObject> lastSeen = new HashMap<>();
+    private static final Map<String, Long> lastPktTime = new HashMap<>();
 
     private static final int RSSI_MIN = -95;
     private static final int COMPANY_ID = 0x0019;
     private static final int NEED_MIN = 2 + 6 + 2 + (2 * 4) + 1;
 
     private static final long CHANGE_WRITE_MS = 50L;
+    private static final long TIMEOUT_MS = 15000L;     // 15 s ohne Paket → stale
+    private static final long CHECK_INTERVAL_MS = 2000L;
     private static long lastWrite = 0L;
 
     private static volatile String activeMac = null;
@@ -83,7 +86,6 @@ public class BleBridgePersistent {
                         int rssi = r.getRssi();
                         if (rssi < RSSI_MIN) return;
 
-                        // Aktive MAC filtern
                         if (activeMac != null && !mac.equalsIgnoreCase(activeMac)) return;
 
                         ScanRecord rec = r.getScanRecord();
@@ -93,7 +95,6 @@ public class BleBridgePersistent {
 
                         byte[] payload = md.get(COMPANY_ID);
                         if (payload == null) {
-                            // Fallback: längstes MSD-Feld wählen
                             int bestLen = 0;
                             for (int i = 0; i < md.size(); i++) {
                                 byte[] p = md.valueAt(i);
@@ -113,14 +114,12 @@ public class BleBridgePersistent {
                         if (j == null) return;
 
                         synchronized (lock) {
-                            JSONObject prev = lastSeen.get(mac);
-                            if (prev == null || !prev.toString().equals(j.toString())) {
-                                lastSeen.put(mac, j);
-                                long now = System.currentTimeMillis();
-                                if (now - lastWrite > CHANGE_WRITE_MS) {
-                                    writeSnapshot();
-                                    lastWrite = now;
-                                }
+                            lastSeen.put(mac, j);
+                            lastPktTime.put(mac, System.currentTimeMillis());
+                            long now = System.currentTimeMillis();
+                            if (now - lastWrite > CHANGE_WRITE_MS) {
+                                writeSnapshot();
+                                lastWrite = now;
                             }
                         }
 
@@ -130,7 +129,6 @@ public class BleBridgePersistent {
                                     + " Hi=" + j.optDouble("humidity_int")
                                     + " Te=" + j.optDouble("temperature_ext")
                                     + " He=" + j.optDouble("humidity_ext")
-                                    + " ext_present=" + j.optBoolean("ext_present")
                                     + " pkt=" + j.optInt("packet_counter"));
 
                     } catch (Throwable t) {
@@ -140,7 +138,8 @@ public class BleBridgePersistent {
             };
 
             scanner.startScan(null, settings, callback);
-            Log.i(TAG, "RUNNING – ultra-low-latency");
+            startWatchdogThread();
+            Log.i(TAG, "RUNNING – alive monitor active");
             return "OK:RUNNING";
 
         } catch (Throwable t) {
@@ -155,7 +154,6 @@ public class BleBridgePersistent {
     // -----------------------------------------------------------
     public static String stop() {
         try {
-            if (!running) return "NOT_RUNNING";
             running = false;
             if (scanner != null && callback != null) {
                 try { scanner.stopScan(callback); } catch (Throwable ignored) {}
@@ -169,19 +167,63 @@ public class BleBridgePersistent {
     }
 
     // -----------------------------------------------------------
+    // Watchdog: prüft alle Geräte auf Timeout
+    // -----------------------------------------------------------
+    private static void startWatchdogThread() {
+        new Thread(() -> {
+            while (running) {
+                try {
+                    long now = System.currentTimeMillis();
+                    boolean changed = false;
+
+                    synchronized (lock) {
+                        for (String mac : new ArrayList<>(lastSeen.keySet())) {
+                            long last = lastPktTime.getOrDefault(mac, 0L);
+                            JSONObject j = lastSeen.get(mac);
+                            if (j == null) continue;
+
+                            boolean alive = now - last < TIMEOUT_MS;
+                            boolean prevAlive = j.optBoolean("alive", true);
+
+                            if (!alive && prevAlive) {
+                                j.put("alive", false);
+                                j.put("status", "stale");
+                                j.put("temperature_int", -99.0);
+                                j.put("humidity_int", -99.0);
+                                j.put("temperature_ext", -99.0);
+                                j.put("humidity_ext", -99.0);
+                                j.put("ext_present", false);
+                                changed = true;
+                                Log.w(TAG, "TIMEOUT → " + mac + " marked stale");
+                            } else if (alive && !prevAlive) {
+                                j.put("alive", true);
+                                j.put("status", "active");
+                                changed = true;
+                                Log.i(TAG, "RECOVER → " + mac + " alive again");
+                            }
+                        }
+
+                        if (changed) writeSnapshot();
+                    }
+
+                    Thread.sleep(CHECK_INTERVAL_MS);
+                } catch (Throwable t) {
+                    Log.e(TAG, "watchdog", t);
+                }
+            }
+        }, "BridgeWatchdog").start();
+    }
+
+    // -----------------------------------------------------------
     // MAC-Filter
     // -----------------------------------------------------------
     public static void setActiveMac(String mac) {
-        try {
-            if (mac == null || mac.trim().isEmpty()) {
-                activeMac = null;
-                Log.i(TAG, "Active MAC cleared");
-            } else {
-                activeMac = mac.trim().toUpperCase();
-                Log.i(TAG, "Active MAC set to " + activeMac);
-            }
-        } catch (Throwable t) {
-            Log.e(TAG, "setActiveMac", t);
+        if (mac == null || mac.trim().isEmpty()) {
+            activeMac = null;
+            Log.i(TAG, "Active MAC cleared");
+        } else {
+            activeMac = mac.trim().toUpperCase();
+            Log.i(TAG, "Active MAC set to " + activeMac);
         }
     }
 
@@ -192,8 +234,7 @@ public class BleBridgePersistent {
     // -----------------------------------------------------------
     private static void writeSnapshot() {
         try {
-            List<JSONObject> snapshot = new ArrayList<>(lastSeen.values());
-            JSONArray arr = new JSONArray(snapshot);
+            JSONArray arr = new JSONArray(lastSeen.values());
             File tmp = new File(outFile.getAbsolutePath() + ".tmp");
             try (FileOutputStream fos = new FileOutputStream(tmp, false)) {
                 fos.write(arr.toString().getBytes());
@@ -206,7 +247,7 @@ public class BleBridgePersistent {
     }
 
     // -----------------------------------------------------------
-    // Decoder mit ext_present-Logik
+    // Decoder (ThermoBeacon-like)
     // -----------------------------------------------------------
     private static JSONObject decodeThermoBeaconLike(String name, String mac, int rssi, byte[] payload, String type) {
         try {
@@ -236,12 +277,7 @@ public class BleBridgePersistent {
             double H_e = he / 16.0;
 
             boolean extPresent = !(H_e <= 0.1 || H_e > 110.0 || Double.isNaN(H_e));
-
-            // wenn Sensor fehlt → Dummywerte
-            if (!extPresent) {
-                T_e = -99.0;
-                H_e = -99.0;
-            }
+            if (!extPresent) { T_e = -99.0; H_e = -99.0; }
 
             if (!(T_i >= -40 && T_i <= 85 && H_i >= 0 && H_i <= 110))
                 return null;
@@ -258,6 +294,8 @@ public class BleBridgePersistent {
             o.put("humidity_ext", H_e);
             o.put("ext_present", extPresent);
             o.put("packet_counter", pkt);
+            o.put("alive", true);
+            o.put("status", "active");
             return o;
 
         } catch (Throwable t) {
@@ -268,10 +306,10 @@ public class BleBridgePersistent {
 
     // -----------------------------------------------------------
     // Helper
-    // signed little-endian 16-bit (fix für negative Temperaturen)
+    // -----------------------------------------------------------
     private static int le16(byte[] a, int off) {
         int val = ((a[off + 1] & 0xFF) << 8) | (a[off] & 0xFF);
-        if ((val & 0x8000) != 0) val -= 0x10000;   // Zweierkomplement → signed short
+        if ((val & 0x8000) != 0) val -= 0x10000;
         return val;
     }
 

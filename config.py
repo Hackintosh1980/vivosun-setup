@@ -17,15 +17,17 @@ CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 DEFAULTS = {
     "device_id": None,
     "mode": "simulation",          # oder 'live'
-    "refresh_interval": 2.0,       # Sekunden zwischen Polls
     "poll_jitter": 0.3,            # Zufalls-Offset (optional)
-    "chart_window": 120,           # Punkte im Chart
     "ui_scale": 0.85,              # Globales Scaling
     "unit": "°C",                  # °C oder °F
     "leaf_offset": 0.0,            # °C Offset für Leaf Temp
     "vpd_offset": 0.0,             # Korrektur für VPD
     "theme": "Dark",               # Theme-Auswahl
     "clear_on_mode_switch": True,  # Charts leeren bei Moduswechsel
+    "refresh_interval": 2.0,
+    "chart_window": 120,
+    "allow_auto_stop": True,
+    "stale_timeout": 12.0
 }
 
 def load_config():
@@ -105,3 +107,42 @@ def toggle_unit():
     save_config(cfg)
     print(f"🌡️ Einheit umgeschaltet → {new_unit}")
     return new_unit
+# ------------------------------------------------------------
+# Zusatz: Timing-Parameter für Watchdog und Polling
+# ------------------------------------------------------------
+
+def get_refresh_interval():
+    """
+    Gibt die Poll-Interval-Zeit (Sekunden) aus config.json zurück.
+    Fallback: 2.0 Sekunden
+    """
+    try:
+        cfg = load_config()
+        return float(cfg.get("refresh_interval", 5.0))
+    except Exception:
+        return 2.0
+
+
+def get_stale_timeout():
+    """
+    Gibt den Timeout (Sekunden ohne neue Pakete) zurück,
+    bevor der Watchdog den Stream als 'stale' betrachtet.
+    Fallback: 10.0 Sekunden
+    """
+    try:
+        cfg = load_config()
+        return float(cfg.get("stale_timeout", 8.0))
+    except Exception:
+        return 10.0
+
+
+def get_chart_window():
+    """
+    Gibt die Anzahl Punkte pro Plot-Fenster zurück.
+    Fallback: 120
+    """
+    try:
+        cfg = load_config()
+        return int(cfg.get("chart_window", 200))
+    except Exception:
+        return 120

@@ -80,6 +80,18 @@ class SettingsScreen(Screen):
         poll_box.add_widget(self.poll_value_lbl)
         root.add_widget(poll_box)
 
+        # ⏱️ Timeout bei Stille (stale_timeout)
+        root.add_widget(field_label("Timeout bei Verbindungs-Stille (Sek.):"))
+        stale_val = float(cfg.get("stale_timeout", 8.0))
+        stale_box = BoxLayout(orientation="horizontal", spacing=10,
+                              size_hint_y=None, height="42dp")
+        self.stale_slider = Slider(min=3, max=30, value=stale_val, step=1)
+        self.stale_value_lbl = Label(text=f"{stale_val:.0f}s", size_hint_x=None, width=60)
+        self.stale_slider.bind(value=lambda _, v: setattr(self.stale_value_lbl, "text", f"{v:.0f}s"))
+        stale_box.add_widget(self.stale_slider)
+        stale_box.add_widget(self.stale_value_lbl)
+        root.add_widget(stale_box)
+
         # Einheit °C / °F
         root.add_widget(field_label("Temperatureinheit:"))
         self.unit_btn = Button(
@@ -158,6 +170,7 @@ class SettingsScreen(Screen):
             cfg = config.load_config()
             cfg["mode"] = self.mode_spinner.text
             cfg["refresh_interval"] = round(float(self.poll_slider.value), 2)
+            cfg["stale_timeout"] = round(float(self.stale_slider.value), 1)
             cfg["unit"] = "°F" if self.fahrenheit_mode else "°C"
             cfg["leaf_offset"] = round(float(self.leaf_slider.value), 1)
             cfg["theme"] = self.theme_spinner.text

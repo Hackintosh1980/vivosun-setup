@@ -26,7 +26,6 @@ from settings_screen import SettingsScreen
 from vpd_scatter_window_full import VPDScatterWindow
 from enlarged_chart_window import EnlargedChartWindow
 from permission_fix import check_permissions
-from hardware_monitor import HardwareMonitor
 import config
 
 
@@ -92,18 +91,11 @@ class VivosunApp(App):
 
         # ChartManager + HardwareMonitor
         self.chart_mgr = ChartManager(dash.children[0])
-        self.hw = HardwareMonitor(poll_interval=5.0)
 
-        # JSON einmalig beim Start leeren
-        try:
-            self.hw.clear_ble_json()
-        except Exception as e:
-            print(f"⚠️ JSON-Reset beim Start fehlgeschlagen: {e}")
-
+       
         # Intervalle (UI + HW-Sync)
         Clock.schedule_interval(self._safe_update_clock, 1.0)
         Clock.schedule_interval(self._safe_update_header, 1.0)
-        Clock.schedule_interval(self._hardware_watchdog_tick, 2.0)
 
         # Berechtigungen (Android)
         if platform == "android":
@@ -143,12 +135,7 @@ class VivosunApp(App):
                     mac = None
             mac = mac or config.load_config().get("device_id") or "--"
 
-            # BT-Status aus Monitor
-            try:
-                bt_enabled = self.hw.is_bluetooth_enabled()
-            except Exception:
-                bt_enabled = False
-
+            
             bridge_flag = bool(getattr(self.chart_mgr, "_bridge_started", False))
             active_flag = bool(getattr(self.chart_mgr, "running", True))
             self.bt_active = bool(bt_enabled or bridge_flag) and active_flag
@@ -164,28 +151,7 @@ class VivosunApp(App):
         except Exception:
             pass
 
-    # ---------------------------------------------------
-    # Hardware-Watchdog (UI-Sync only)
-    # ---------------------------------------------------
-    def _hardware_watchdog_tick(self, *_):
-        """
-        UI-Synchronisierung:
-        • BT-Status refresh
-        • MAC/RSSI aus ChartManager-Cache
-        Kein JSON-Clear hier! → Nur im HardwareMonitor.
-        """
-        try:
-            self.bt_active = self.hw.is_bluetooth_enabled()
-            cache = getattr(self.chart_mgr, "_header_cache", {})
-            if isinstance(cache, dict):
-                mac = cache.get("mac")
-                rssi = cache.get("rssi")
-                if mac:
-                    self.current_mac = mac
-                if isinstance(rssi, (int, float)):
-                    self.last_rssi = rssi
-        except Exception as e:
-            print(f"⚠️ Hardware-Watchdog-Fehler: {e}")
+    
 
     # ---------------------------------------------------
     # Permissions-Popup
