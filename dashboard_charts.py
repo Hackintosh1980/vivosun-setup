@@ -12,7 +12,12 @@ Features
     – Freeze bei Datenstille (keine neuen Punkte)
     – Auto-Stop des Pollings (config.allow_auto_stop)
     – Auto-Recovery bei JEDEM Counter-Wechsel (auch Reset/Wrap)
-• Manuelle Steuerung: user_stop() / user_start()
+• Manuelle Steuerung: user_stop() / user_start() / reset_data() / reload_config()
+• Konfigurierbar über config.json:
+    - refresh_interval: float (s)
+    - chart_window: int (Punkte)
+    - stale_timeout: float (s)  ← NEU
+    - allow_auto_stop: bool
 • MAC + RSSI im Header (mit Farblogik)
 • Keine JSON-Löschung
 • Ruhige Logs
@@ -109,7 +114,6 @@ class ChartManager:
         # Watchdog / Flow-Tracking
         self._last_pkt_seen: Optional[int] = None   # letzter erkannter packet_counter
         self._last_pkt_time: float = 0.0            # Zeitstempel des letzten Anstiegs
-        self._stale_timeout: float = 20.0           # Sekunden ohne Anstieg → stale
         self._stale_logged: bool = False            # 1x Warnung je Stale-Phase
 
         # Auto-Stop / Recovery / User-Pause
@@ -125,8 +129,12 @@ class ChartManager:
         self.cfg: Dict[str, Any] = config.load_config() or {}
         self.refresh_interval: float = float(self.cfg.get("refresh_interval", 4.0))
         self.chart_window: int = int(self.cfg.get("chart_window", 120))
-        self.allow_auto_stop: bool = bool(self.cfg.get("allow_auto_stop", True))  # default: True
-        print(f"🌿 ChartManager init – Poll={self.refresh_interval}s, Window={self.chart_window}, AutoStop={self.allow_auto_stop}")
+        # NEU: stale_timeout aus config, sonst dynamisch berechnen
+        self.stale_timeout: Optional[float] = self._coerce_float(self.cfg.get("stale_timeout"))
+        self.allow_auto_stop: bool = bool(self.cfg.get("allow_auto_stop", True))
+
+        print(f"🌿 ChartManager init – Poll={self.refresh_interval}s, Window={self.chart_window}, "
+              f"Timeout={self._effective_timeout():.1f}s, AutoStop={self.allow_auto_stop}")
 
         # Tile-Keys
         self._tile_keys_int = ["tile_t_in", "tile_h_in", "tile_vpd_in"]
@@ -137,6 +145,23 @@ class ChartManager:
         self._ensure_bridge_started()
         self.start_polling()
         self._ensure_recovery_timer()
+
+    # ------------------------------
+    # Helpers (internal)
+    # ------------------------------
+    @staticmethod
+    def _coerce_float(v: Any) -> Optional[float]:
+        try:
+            if v is None: return None
+            return float(v)
+        except Exception:
+            return None
+
+    def _effective_timeout(self) -> float:
+        """Benutzt 'stale_timeout' aus config, sonst dynamisch: max(2*refresh, 3.0)."""
+        if isinstance(self.stale_timeout, (int, float)) and self.stale_timeout > 0:
+            return float(self.stale_timeout)
+        return max(self.refresh_interval * 2.0, 3.0)
 
     # ------------------------------
     # Tiles/Plots initialisieren
@@ -216,6 +241,7 @@ class ChartManager:
         """Manuell pausieren (Button). Verhindert Auto-Recovery."""
         self._user_paused = True
         self._stale_logged = True  # UI zeigt Freeze
+        self._last_pkt_at_stop = None  # Watchdog vollständig entkoppeln
         self._set_no_data_labels()
         self.stop_polling()
         print("⏸️ Manuell pausiert (Charts eingefroren).")
@@ -232,7 +258,7 @@ class ChartManager:
     # ------------------------------
     def _ensure_recovery_timer(self) -> None:
         if self._recovery_event is None:
-            self._recovery_event = Clock.schedule_interval(self._check_recovery, 2.0)
+            self._recovery_event = Clock.schedule_interval(self._check_recovery, 1.5)  # etwas schneller
 
     def _cancel_recovery_timer(self) -> None:
         if self._recovery_event:
@@ -297,7 +323,7 @@ class ChartManager:
         """True, sobald sich der Counter überhaupt verändert hat (Reset, Wrap, Anstieg)."""
         if new_val is None or ref_val is None:
             return False
-        return new_val != ref_val  # bewusst KEIN '>' – damit 129→1 oder Wrap sofort greift
+        return new_val != ref_val  # KEIN '>' – 129→1/Wrap ok
 
     # ------------------------------
     # Haupt-Poll
@@ -331,12 +357,14 @@ class ChartManager:
                     self._set_no_data_labels();  return
 
             d = data[0]
-            self._update_header(d)  # MAC/RSSI stets aktuell halten (auch im Stale-Fall)
+            self._update_header(d)  # MAC/RSSI stets aktuell (auch im Stale-Fall)
 
-            # Bridge meldet „stale“ explizit?
+            # ------------------------------------------------------
+            # Bridge meldet „alive“ explizit?
+            # ------------------------------------------------------
             alive_flag = d.get("alive")
             if alive_flag is False:
-                # Komplett stoppen & einfrieren
+                # sofort einfrieren
                 self._set_no_data_labels()
                 if self.allow_auto_stop and not self._user_paused:
                     pkt_stop = d.get("packet_counter") or d.get("pkt") or d.get("counter")
@@ -346,7 +374,9 @@ class ChartManager:
                     print("⏹ Polling auto-gestoppt (Bridge alive=false). Warte auf Counter-Änderung…")
                 return
 
-            # ------------------ Watchdog (Counter) ------------------
+            # ------------------------------------------------------
+            # Watchdog (Counter-Logik)
+            # ------------------------------------------------------
             pkt = d.get("packet_counter") or d.get("pkt") or d.get("counter")
             try:
                 pkt_val = int(pkt) if pkt is not None else None
@@ -354,47 +384,46 @@ class ChartManager:
                 pkt_val = None
 
             now = time.time()
+
+            # dynamischer/konfigurierter Timeout
+            dyn_timeout = self._effective_timeout()
             stale_for = now - self._last_pkt_time
 
             if pkt_val is not None:
                 if self._last_pkt_seen is None or pkt_val != self._last_pkt_seen:
-                    # neues Paket → aktiv
+                    # ✅ Neues Paket erkannt
                     self._last_pkt_seen = pkt_val
                     self._last_pkt_time = now
                     if self._stale_logged:
                         print("✅ Neuer Datenstrom erkannt – Charts reaktiviert")
                     self._stale_logged = False
-                else:
-                    # stagnierender Counter
-                    if stale_for >= self._stale_timeout:
-                        if not self._stale_logged:
-                            print(f"⚠️ Keine neuen Pakete seit {stale_for:.1f}s")
-                            self._stale_logged = True
-                        self._set_no_data_labels()
-
-                        if self.allow_auto_stop and not self._user_paused:
-                            self._last_pkt_at_stop = self._last_pkt_seen
-                            self.stop_polling()
-                            print("⏹ Polling auto-gestoppt (Stille). Warte auf Counter-Änderung…")
-                            return
-                        else:
-                            return
+                elif stale_for >= dyn_timeout:
+                    # ⚠️ zu lange keine Bewegung
+                    if not self._stale_logged:
+                        print(f"⚠️ Keine neuen Pakete seit {stale_for:.1f}s")
+                        self._stale_logged = True
+                    self._set_no_data_labels()
+                    if self.allow_auto_stop and not self._user_paused:
+                        self._last_pkt_at_stop = self._last_pkt_seen
+                        self.stop_polling()
+                        print("⏹ Polling auto-gestoppt (Stille). Warte auf Counter-Änderung…")
+                    return
             else:
-                # Kein Counter vorhanden → wie Stille behandeln
-                if stale_for >= self._stale_timeout:
+                # Kein Counter → wie Stille behandeln
+                if stale_for >= dyn_timeout:
                     if not self._stale_logged:
                         print(f"⚠️ Keine neuen Pakete seit {stale_for:.1f}s (kein counter)")
                         self._stale_logged = True
                     self._set_no_data_labels()
                     if self.allow_auto_stop and not self._user_paused:
-                        self._last_pkt_at_stop = self._last_pkt_seen if self._last_pkt_seen is not None else -1
+                        self._last_pkt_at_stop = self._last_pkt_seen if (self._last_pkt_seen is not None) else -1
                         self.stop_polling()
                         print("⏹ Polling auto-gestoppt (kein counter).")
-                        return
-                    else:
-                        return
+                    return
 
-            # ------------------ Daten extrahieren ------------------
+            # ------------------------------------------------------
+            # Werte extrahieren & anzeigen
+            # ------------------------------------------------------
             t_int_c = d.get("temperature_int", 0.0)
             t_ext_c = d.get("temperature_ext", 0.0)
             h_int   = d.get("humidity_int", 0.0)
@@ -420,7 +449,7 @@ class ChartManager:
             t_int_disp = convert_temperature(t_int_c, "F") if is_f else t_int_c
             t_ext_disp = convert_temperature(t_ext_c, "F") if is_f else t_ext_c
 
-            # ------------------ Charts + Labels ------------------
+            # Charts + Labels
             values = {
                 "tile_t_in":   t_int_disp,
                 "tile_h_in":   h_int,
@@ -468,18 +497,16 @@ class ChartManager:
                 return
 
             d = data[0]
-            # 1) Explizites Bridge-Alive?
+            # a) Explizites Bridge-Alive?
             alive_flag = d.get("alive")
+
+            # b) Counter-Änderung (egal ob größer/kleiner/reset/wrap)
             pkt = d.get("packet_counter") or d.get("pkt") or d.get("counter")
-            pkt_val = None
             try:
                 pkt_val = int(pkt) if pkt is not None else None
             except Exception:
                 pkt_val = None
 
-            # Recovery-Bedingungen:
-            #   a) alive==true (falls Bridge das Feld setzt) ODER
-            #   b) Counter hat sich GEÄNDERT (egal ob größer, kleiner, Reset, Wrap)
             cond_alive = (alive_flag is True)
             cond_counter = (self._last_pkt_at_stop is not None) and self._pkt_changed(pkt_val, self._last_pkt_at_stop)
 
@@ -612,7 +639,9 @@ class ChartManager:
         self.refresh_interval = float(new_cfg.get("refresh_interval", self.refresh_interval))
         self.chart_window     = int(new_cfg.get("chart_window", self.chart_window))
         self.allow_auto_stop  = bool(new_cfg.get("allow_auto_stop", self.allow_auto_stop))
+        self.stale_timeout    = self._coerce_float(new_cfg.get("stale_timeout"))
         self.cfg.update(new_cfg)
-        print(f"♻️ Config neu geladen: Poll={self.refresh_interval}, Window={self.chart_window}, AutoStop={self.allow_auto_stop}")
+        print(f"♻️ Config neu geladen: Poll={self.refresh_interval}, Window={self.chart_window}, "
+              f"Timeout={self._effective_timeout():.1f}s, AutoStop={self.allow_auto_stop}")
         if self.running:
             self.start_polling()
