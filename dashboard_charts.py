@@ -326,7 +326,7 @@ class ChartManager:
         return new_val != ref_val  # KEIN '>' – 129→1/Wrap ok
 
     # ------------------------------
-    # Haupt-Poll
+    # Haupt-Poll (mit Auto-Cleanup)
     # ------------------------------
     def _poll_json(self, *_):
         if not self.running:
@@ -337,24 +337,28 @@ class ChartManager:
 
             # Datei lesen
             if not os.path.exists(APP_JSON):
-                self._set_no_data_labels();  return
+                self._set_no_data_labels()
+                return
             with open(APP_JSON, "r", encoding="utf-8") as f:
                 raw = f.read().strip()
             if not raw:
-                self._set_no_data_labels();  return
+                self._set_no_data_labels()
+                return
 
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 return
             if not isinstance(data, list) or not data:
-                self._set_no_data_labels();  return
+                self._set_no_data_labels()
+                return
 
             # Device-Fokus
             if device_id:
                 data = [d for d in data if (d.get("address") or d.get("mac")) == device_id]
                 if not data:
-                    self._set_no_data_labels();  return
+                    self._set_no_data_labels()
+                    return
 
             d = data[0]
             self._update_header(d)  # MAC/RSSI stets aktuell (auch im Stale-Fall)
@@ -368,10 +372,20 @@ class ChartManager:
                 self._set_no_data_labels()
                 if self.allow_auto_stop and not self._user_paused:
                     pkt_stop = d.get("packet_counter") or d.get("pkt") or d.get("counter")
-                    try: self._last_pkt_at_stop = int(pkt_stop)
-                    except Exception: self._last_pkt_at_stop = self._last_pkt_seen
+                    try:
+                        self._last_pkt_at_stop = int(pkt_stop)
+                    except Exception:
+                        self._last_pkt_at_stop = self._last_pkt_seen
                     self.stop_polling()
                     print("⏹ Polling auto-gestoppt (Bridge alive=false). Warte auf Counter-Änderung…")
+
+                # JSON Auto-Cleanup (nur Desktop)
+                if platform != "android" and os.path.exists(APP_JSON):
+                    try:
+                        os.remove(APP_JSON)
+                        print("🧹 JSON gelöscht – Bridge meldet alive=false")
+                    except Exception as e:
+                        print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                 return
 
             # ------------------------------------------------------
@@ -384,8 +398,6 @@ class ChartManager:
                 pkt_val = None
 
             now = time.time()
-
-            # dynamischer/konfigurierter Timeout
             dyn_timeout = self._effective_timeout()
             stale_for = now - self._last_pkt_time
 
@@ -407,6 +419,14 @@ class ChartManager:
                         self._last_pkt_at_stop = self._last_pkt_seen
                         self.stop_polling()
                         print("⏹ Polling auto-gestoppt (Stille). Warte auf Counter-Änderung…")
+
+                    # JSON Auto-Cleanup
+                    if platform != "android" and os.path.exists(APP_JSON):
+                        try:
+                            os.remove(APP_JSON)
+                            print("🧹 JSON gelöscht – Timeout ohne Daten")
+                        except Exception as e:
+                            print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                     return
             else:
                 # Kein Counter → wie Stille behandeln
@@ -419,6 +439,14 @@ class ChartManager:
                         self._last_pkt_at_stop = self._last_pkt_seen if (self._last_pkt_seen is not None) else -1
                         self.stop_polling()
                         print("⏹ Polling auto-gestoppt (kein counter).")
+
+                    # JSON Auto-Cleanup
+                    if platform != "android" and os.path.exists(APP_JSON):
+                        try:
+                            os.remove(APP_JSON)
+                            print("🧹 JSON gelöscht – kein Counter erkannt")
+                        except Exception as e:
+                            print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                     return
 
             # ------------------------------------------------------
@@ -449,7 +477,7 @@ class ChartManager:
             t_int_disp = convert_temperature(t_int_c, "F") if is_f else t_int_c
             t_ext_disp = convert_temperature(t_ext_c, "F") if is_f else t_ext_c
 
-            # Charts + Labels
+            # Charts + Labels aktualisieren
             values = {
                 "tile_t_in":   t_int_disp,
                 "tile_h_in":   h_int,
