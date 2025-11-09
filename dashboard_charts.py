@@ -568,6 +568,14 @@ class ChartManager:
         if not grid:
             return
 
+        # 🧯 Kurz Polling pausieren, um FBO-Fehler zu vermeiden
+        was_running = bool(getattr(self, "running", False))
+        if was_running:
+            try:
+                self.stop_polling()
+            except Exception:
+                pass
+
         if ext_visible:
             grid.rows, grid.cols = 2, 3
         else:
@@ -576,11 +584,19 @@ class ChartManager:
         self._toggle_external_tiles(ext_visible)
         Clock.schedule_once(lambda dt: grid.do_layout(), 0.4)
 
+        # 🕐 Polling nach Ende der Animation wieder aktivieren
+        if was_running:
+            Clock.schedule_once(lambda dt: self.start_polling(), 0.6)
+
+    # ------------------------------
+    # Sichtbarkeit externer Tiles anpassen
+    # ------------------------------
     def _toggle_external_tiles(self, visible: bool) -> None:
-        # externe
+        # externe Tiles
         for key in self._tile_keys_ext:
             tile = self.dashboard.ids.get(key)
-            if not tile: continue
+            if not tile:
+                continue
             Animation.cancel_all(tile)
             if visible:
                 tile.disabled = False
@@ -589,15 +605,16 @@ class ChartManager:
                 tile.disabled = True
                 anim = Animation(opacity=0.0, height=0, d=0.35)
             anim.start(tile)
-        # interne leicht „atmen“
+
+        # interne Tiles leicht „atmen“
         for key in self._tile_keys_int:
             tile = self.dashboard.ids.get(key)
-            if not tile: continue
+            if not tile:
+                continue
             Animation.cancel_all(tile)
             h = tile.height if tile.height > 0 else tile.base_height
             Animation(height=h + dp(1), d=0.05).start(tile)
             Clock.schedule_once(lambda *_t, t=tile: setattr(t, "height", t.base_height), 0.08)
-
     # ------------------------------
     # Helpers
     # ------------------------------
