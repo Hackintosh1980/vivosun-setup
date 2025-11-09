@@ -177,6 +177,15 @@ class ChartManager:
                 tile.base_height = tile.height if tile.height > 0 else dp(160)
 
             graph = tile.ids.g
+
+            # --- Graph-Styling (keine Achsen, Ticks, Labels, Rahmen) ---
+            graph.draw_ticks = False
+            graph.draw_labels = False
+            graph.tick_color = (0, 0, 0, 0)
+            graph.draw_border = False
+            graph.background_color = (0, 0, 0, 0)
+
+            # --- Plot anlegen ---
             plot = LinePlot(color=(*tile.accent, 1))
             plot.line_width = 4.0
             graph.add_plot(plot)

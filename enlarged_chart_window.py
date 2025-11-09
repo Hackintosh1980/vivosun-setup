@@ -21,7 +21,9 @@ from kivy.properties import StringProperty, ObjectProperty, ListProperty
 from kivy.graphics import Color, Rectangle, Ellipse
 from kivy.core.text import LabelBase
 from kivy.uix.modalview import ModalView
-
+from kivy.graphics import Color, Rectangle, Ellipse
+from kivy_garden.graph import MeshLinePlot
+from kivy.animation import Animation
 # ----------------------------------------------------
 # Font scaling + FontAwesome
 # ----------------------------------------------------
@@ -124,34 +126,54 @@ class EnlargedChartWindow(BoxLayout):
         self.bind(size=lambda *_: setattr(self._bg, "size", self.size))
         self.bind(pos=lambda *_: setattr(self._bg, "pos", self.pos))
 
-        # Header
+       # ---------------------------------------------------
+        # Header mit halbtransparentem Hintergrund
+        # ---------------------------------------------------
         header = BoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp_scaled(70),
-            padding=[dp_scaled(12), dp_scaled(8), dp_scaled(12), 0], spacing=dp_scaled(8)
+            padding=[dp_scaled(12), dp_scaled(8), dp_scaled(12), 0],
+            spacing=dp_scaled(8)
         )
+
+        # 💚 Leicht durchsichtiger grüner Hintergrund
+        with header.canvas.before:
+            Color(0.0, 0.3, 0.1, 0.45)  # R,G,B,Alpha (Alpha=Transparenz)
+            self._header_bg = Rectangle(size=header.size, pos=header.pos)
+
+        # Dynamisch mit Fenstergröße mitwachsen
+        header.bind(size=lambda *_: setattr(self._header_bg, "size", header.size))
+        header.bind(pos=lambda *_: setattr(self._header_bg, "pos", header.pos))
+        
+        # --- Linke Seite ---
         left = BoxLayout(orientation="vertical", size_hint_x=0.6, spacing=dp_scaled(2))
         self._value_lbl = Label(
             text="--", font_size=sp_scaled(28), color=(0.95, 1, 0.95, 1),
-            bold=True, halign="left", valign="middle", size_hint_y=None, height=dp_scaled(36)
+            bold=True, halign="left", valign="middle",
+            size_hint_y=None, height=dp_scaled(36)
         )
         self._title_lbl = Label(
-            markup=True, text="[b]—[/b]", font_size=sp_scaled(16),
-            color=(0.8, 1, 0.85, 1), halign="left", valign="middle",
+            markup=True, text="[b]—[/b]",
+            font_size=sp_scaled(16),
+            color=(0.8, 1, 0.85, 1),
+            halign="left", valign="middle",
             size_hint_y=None, height=dp_scaled(24)
         )
         left.add_widget(self._value_lbl)
         left.add_widget(self._title_lbl)
 
+        # --- Rechte Seite ---
         right = BoxLayout(orientation="horizontal", size_hint_x=0.4, spacing=dp_scaled(6))
         self._led_box = BoxLayout(orientation="vertical", size_hint_x=None, width=dp_scaled(28))
         with self._led_box.canvas:
             self._led_color = Color(1, 0, 0, 1)
             self._led_ellipse = Ellipse(size=(dp_scaled(16), dp_scaled(16)))
+
         def _pos_led(*_):
             self._led_ellipse.pos = (
                 self._led_box.x + dp_scaled(6),
                 self._led_box.y + (self._led_box.height - dp_scaled(16)) / 2
             )
+
         self._led_box.bind(pos=_pos_led, size=_pos_led)
 
         self._mac_lbl = Label(text="--", font_size=sp_scaled(13), color=(0.8, 1, 0.9, 1))
@@ -166,20 +188,54 @@ class EnlargedChartWindow(BoxLayout):
         header.add_widget(right)
         self.add_widget(header)
 
-        # Graph
+        
+        # Graph (transparent) mit stabilem Hintergrundbild darunter – Logik unverändert
         try:
+            # Wrapper für Bild + Graph (keine weitere Logik anrühren)
+            from kivy.uix.floatlayout import FloatLayout
+            from kivy.uix.image import Image
+
+            wrapper = FloatLayout(size_hint_y=1.0)
+
+            # Hintergrundbild laden (füllt den Wrapper)
+            bg_path = os.path.join(BASE_DIR, "assets", "tiles_bg.png")
+            if os.path.exists(bg_path):
+                bg_img = Image(
+                    source=bg_path,
+                    fit_mode="fill",           # modern statt keep_ratio/allow_stretch
+                    size_hint=(1, 1),
+                    pos_hint={"x": 0, "y": 0}
+                )
+                wrapper.add_widget(bg_img)
+                print(f"🖼️ Hintergrund aktiv: {bg_path}")
+            else:
+                print("⚠️ tiles_bg.png nicht gefunden!")
+
+            # Dein Graph – identische Achsen/Parameter, aber transparenter Hintergrund
             self.graph = Graph(
-                xlabel="Time", ylabel="", x_ticks_major=10, y_ticks_major=0.5,
-                background_color=(0.05, 0.07, 0.06, 1), tick_color=(0.3, 0.8, 0.4, 1),
-                draw_border=False, xmin=0, xmax=60, ymin=0, ymax=1, size_hint_y=1.0
+                xlabel="Time", ylabel="",
+                x_ticks_major=10, y_ticks_major=0.5,
+                background_color=(0, 0, 0, 0),   # transparent über dem Bild
+                tick_color=(0.3, 0.8, 0.4, 1),
+                draw_border=False,
+                xmin=0, xmax=60, ymin=0, ymax=1,
+                size_hint_y=1.0
             )
-            self.plot = LinePlot(line_width=4.0)
+
+            # Dein dicker Mesh-Plot (VIVOSUN-Look)
+            self.plot = MeshLinePlot(color=(0.8, 1.0, 0.8, 1))
+            self.plot.line_width = 5.5
             self.graph.add_plot(self.plot)
-            self.add_widget(self.graph)
+
+            # Reihenfolge: erst Bild, dann Graph
+            wrapper.add_widget(self.graph)
+
+            # Wrapper statt Graph direkt einhängen (Buttons/Logik bleiben unberührt)
+            self.add_widget(wrapper)
+
         except Exception as e:
             self._graph_ok = False
             self.add_widget(Label(text=f"⚠️ Graph not supported: {e}", color=(1, 0.8, 0.6, 1)))
-
         # Controls
         controls = BoxLayout(
             orientation="horizontal", size_hint_y=None,
