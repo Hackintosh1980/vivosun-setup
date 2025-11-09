@@ -333,17 +333,7 @@ class Header(BoxLayout):
         except Exception:
             chart_mgr = None
 
-        # ✅ LED sofort beim Header erzeugen
-        Clock.schedule_once(lambda dt: self._insert_led(chart_mgr), 0.2)
-
-    def _insert_led(self, chart_mgr):
-        try:
-            led = BtLedWidget(chart_mgr=chart_mgr)
-            self.add_widget(led)
-            print("💡 Header-LED initialisiert.")
-        except Exception as e:
-            print("⚠️ Header-LED-Fehler:", e)
-            
+                    
 class Tile(BoxLayout):
     title = StringProperty("Title")
     value_text = StringProperty("--")

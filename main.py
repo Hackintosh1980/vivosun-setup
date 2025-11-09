@@ -72,7 +72,9 @@ class VivosunApp(App):
     current_mac = None
     last_rssi   = None
     bt_active   = False
-
+    chart_mgr = None
+    btn_dashboard = None
+    btn_enlarged = None
     # ---------------------------------------------------
     # Build
     # ---------------------------------------------------
@@ -107,6 +109,22 @@ class VivosunApp(App):
     # ---------------------------------------------------
     # UI-Updates
     # ---------------------------------------------------
+    
+
+    def update_startstop_ui(self, running: bool):
+        """Synchronisiert Start/Stop-Button-Text + Farbe in allen UIs."""
+        btns = [self.btn_dashboard, self.btn_enlarged]
+        for b in btns:
+            if not b:
+                continue
+            if running:
+                b.text = "[font=FA]\\uf04d[/font] Stop"
+                b.background_color = (0.6, 0.2, 0.2, 1)
+            else:
+                b.text = "[font=FA]\\uf04b[/font] Start"
+                b.background_color = (0.2, 0.6, 0.2, 1)
+
+
     def _safe_update_clock(self, *_):
         try:
             dash = self.sm.get_screen("dashboard")
@@ -213,14 +231,25 @@ class VivosunApp(App):
         if running:
             # ✅ nutzt ChartManager-API, nicht manuell toggeln
             self.chart_mgr.user_stop()
+            self.chart_mgr.running = False
             if button:
-                button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04b[/font] Start"
+                button.text = "[font=FA]\uf04b[/font] Start"
                 button.background_color = (0.2, 0.6, 0.2, 1)
+            print("⏸️ Manuell pausiert – Charts bleiben sichtbar.")
         else:
             self.chart_mgr.user_start()
+            self.chart_mgr.running = True
             if button:
-                button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04d[/font] Stop"
+                button.text = "[font=FA]\uf04d[/font] Stop"
                 button.background_color = (0.6, 0.2, 0.2, 1)
+            print("▶️ Manuell fortgesetzt.")
+
+        # 🔄 UI-Sync für Dashboard + Enlarged
+        try:
+            self.update_startstop_ui(self.chart_mgr.running)
+        except Exception as e:
+            print("⚠️ UI-Sync-Fehler:", e)
+            
 
     def on_reset_pressed(self):
         if hasattr(self, "chart_mgr"):

@@ -1,1 +1,10 @@
 *.pyc
+__pycache__/vpd_scatter_window_full.cpython-312.pyc
+__pycache__/utils.cpython-312.pyc
+__pycache__/setup_screen.cpython-312.pyc
+__pycache__/settings_screen.cpython-312.pyc
+__pycache__/permission_fix.cpython-312.pyc
+__pycache__/dashboard_gui.cpython-312.pyc
+__pycache__/dashboard_charts.cpython-312.pyc
+__pycache__/config.cpython-312.pyc
+*.pyc
