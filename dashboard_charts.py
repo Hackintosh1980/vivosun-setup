@@ -230,7 +230,7 @@ class ChartManager:
         print(f"▶️ Starte Polling ({self.refresh_interval}s)")
 
     def stop_polling(self) -> None:
-        """Internes Stoppen (nur von Auto-Stop genutzt)."""
+        """Internes Stoppen (nur von Auto-Stop oder Watchdog genutzt)."""
         if self._poll_event:
             Clock.unschedule(self._poll_event)
             self._poll_event = None
@@ -238,21 +238,23 @@ class ChartManager:
         print("⏹ Polling gestoppt.")
 
     def user_stop(self) -> None:
-        """Manuell pausieren (Button). Verhindert Auto-Recovery."""
+        """Manuell pausieren (Button). Charts bleiben sichtbar."""
         self._user_paused = True
-        self._stale_logged = True  # UI zeigt Freeze
-        self._last_pkt_at_stop = None  # Watchdog vollständig entkoppeln
-        self._set_no_data_labels()
-        self.stop_polling()
-        print("⏸️ Manuell pausiert (Charts eingefroren).")
+        self._stale_logged = True
+        self._last_pkt_at_stop = None
+        self.stop_polling()  # nur Poll stoppen
+        # Recovery-Timer darf weiterlaufen (kein Auto-Neustart, aber Monitoring)
+        print("⏸️ Manuell pausiert – Charts bleiben sichtbar.")
 
     def user_start(self) -> None:
         """Manuell fortsetzen (Button)."""
         self._user_paused = False
         self._stale_logged = False
+        self._ensure_recovery_timer()   # Timer wieder aktivieren
         self.start_polling()
         print("▶️ Manuell fortgesetzt.")
 
+    
     # ------------------------------
     # Recovery-Timer-Verwaltung
     # ------------------------------
@@ -361,14 +363,13 @@ class ChartManager:
                     return
 
             d = data[0]
-            self._update_header(d)  # MAC/RSSI stets aktuell (auch im Stale-Fall)
+            self._update_header(d)
 
             # ------------------------------------------------------
             # Bridge meldet „alive“ explizit?
             # ------------------------------------------------------
             alive_flag = d.get("alive")
             if alive_flag is False:
-                # sofort einfrieren
                 self._set_no_data_labels()
                 if self.allow_auto_stop and not self._user_paused:
                     pkt_stop = d.get("packet_counter") or d.get("pkt") or d.get("counter")
@@ -379,13 +380,13 @@ class ChartManager:
                     self.stop_polling()
                     print("⏹ Polling auto-gestoppt (Bridge alive=false). Warte auf Counter-Änderung…")
 
-                # JSON Auto-Cleanup (nur Desktop)
-                if platform != "android" and os.path.exists(APP_JSON):
-                    try:
+                # 🌿 JSON immer löschen – egal ob Android oder Desktop
+                try:
+                    if os.path.exists(APP_JSON):
                         os.remove(APP_JSON)
-                        print("🧹 JSON gelöscht – Bridge meldet alive=false")
-                    except Exception as e:
-                        print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
+                        print("🧹 JSON gelöscht – alive=false erkannt")
+                except Exception as e:
+                    print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                 return
 
             # ------------------------------------------------------
@@ -403,14 +404,12 @@ class ChartManager:
 
             if pkt_val is not None:
                 if self._last_pkt_seen is None or pkt_val != self._last_pkt_seen:
-                    # ✅ Neues Paket erkannt
                     self._last_pkt_seen = pkt_val
                     self._last_pkt_time = now
                     if self._stale_logged:
                         print("✅ Neuer Datenstrom erkannt – Charts reaktiviert")
                     self._stale_logged = False
                 elif stale_for >= dyn_timeout:
-                    # ⚠️ zu lange keine Bewegung
                     if not self._stale_logged:
                         print(f"⚠️ Keine neuen Pakete seit {stale_for:.1f}s")
                         self._stale_logged = True
@@ -420,13 +419,13 @@ class ChartManager:
                         self.stop_polling()
                         print("⏹ Polling auto-gestoppt (Stille). Warte auf Counter-Änderung…")
 
-                    # JSON Auto-Cleanup
-                    if platform != "android" and os.path.exists(APP_JSON):
-                        try:
+                    # 🌿 JSON löschen bei Timeout
+                    try:
+                        if os.path.exists(APP_JSON):
                             os.remove(APP_JSON)
                             print("🧹 JSON gelöscht – Timeout ohne Daten")
-                        except Exception as e:
-                            print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
+                    except Exception as e:
+                        print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                     return
             else:
                 # Kein Counter → wie Stille behandeln
@@ -440,13 +439,13 @@ class ChartManager:
                         self.stop_polling()
                         print("⏹ Polling auto-gestoppt (kein counter).")
 
-                    # JSON Auto-Cleanup
-                    if platform != "android" and os.path.exists(APP_JSON):
-                        try:
+                    # 🌿 JSON löschen bei Counterfehler
+                    try:
+                        if os.path.exists(APP_JSON):
                             os.remove(APP_JSON)
                             print("🧹 JSON gelöscht – kein Counter erkannt")
-                        except Exception as e:
-                            print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
+                    except Exception as e:
+                        print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                     return
 
             # ------------------------------------------------------
@@ -457,17 +456,14 @@ class ChartManager:
             h_int   = d.get("humidity_int", 0.0)
             h_ext   = d.get("humidity_ext", 0.0)
 
-            # externen Fühler erkennen (vor Umrechnung)
             ext_now = self._detect_external_present(t_ext_c, h_ext)
             if self.ext_present is None or ext_now != self.ext_present:
                 self.ext_present = ext_now
                 self._apply_layout(ext_now)
 
-            # VPD (immer in °C rechnen)
             vpd_in  = utils.calc_vpd(t_int_c, h_int)
             vpd_out = utils.calc_vpd(t_ext_c, h_ext)
 
-            # Anzeigeeinheit °C/°F
             try:
                 unit_str = str((config.load_config() or {}).get("unit", "°C"))
                 is_f = "F" in unit_str.upper()
@@ -476,7 +472,6 @@ class ChartManager:
             from utils import convert_temperature
             t_int_disp = convert_temperature(t_int_c, "F") if is_f else t_int_c
             t_ext_disp = convert_temperature(t_ext_c, "F") if is_f else t_ext_c
-
             # Charts + Labels aktualisieren
             values = {
                 "tile_t_in":   t_int_disp,

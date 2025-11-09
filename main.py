@@ -138,7 +138,7 @@ class VivosunApp(App):
             
             bridge_flag = bool(getattr(self.chart_mgr, "_bridge_started", False))
             active_flag = bool(getattr(self.chart_mgr, "running", True))
-            self.bt_active = bool(bt_enabled or bridge_flag) and active_flag
+            self.bt_active = bridge_flag and active_flag
 
             icon = "\uf294" if self.bt_active else "\uf293"
             color = (0.3, 1.0, 0.3, 1) if self.bt_active else (1.0, 0.4, 0.3, 1)
@@ -207,16 +207,17 @@ class VivosunApp(App):
     def on_stop_pressed(self, button=None):
         if not hasattr(self, "chart_mgr"):
             return
+
         running = getattr(self.chart_mgr, "running", True)
+
         if running:
-            self.chart_mgr.stop_polling()
-            self.chart_mgr.running = False
+            # ✅ nutzt ChartManager-API, nicht manuell toggeln
+            self.chart_mgr.user_stop()
             if button:
                 button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04b[/font] Start"
                 button.background_color = (0.2, 0.6, 0.2, 1)
         else:
-            self.chart_mgr.start_polling()
-            self.chart_mgr.running = True
+            self.chart_mgr.user_start()
             if button:
                 button.text = "[font=assets/fonts/fa-solid-900.ttf]\uf04d[/font] Stop"
                 button.background_color = (0.6, 0.2, 0.2, 1)

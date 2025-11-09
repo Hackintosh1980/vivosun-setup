@@ -14,6 +14,9 @@ from kivy.core.text import LabelBase
 from kivy.metrics import dp
 from kivy.utils import platform
 from kivy.clock import Clock
+from kivy.uix.boxlayout import BoxLayout
+from kivy.graphics import Color, Ellipse
+from kivy.clock import Clock
 import config
 
 
@@ -94,13 +97,13 @@ KV = f"""
             valign: "middle"
             text_size: self.size
 
-        # ---- RSSI ----
+        # ---- RSSI + BT LED ----
         BoxLayout:
             id: rssi_box
             orientation: "horizontal"
             size_hint_x: None
-            width: dp(80)
-            spacing: dp(3)
+            width: dp(110)
+            spacing: dp(5)
             Label:
                 id: rssi_icon
                 markup: True
@@ -114,7 +117,10 @@ KV = f"""
                 text: "-- dBm"
                 font_size: "11sp"
                 color: 0.7, 1.0, 0.8, 1
-
+            Widget:
+                id: bt_led_placeholder
+                size_hint_x: None
+                width: dp(20)
         # ---- Uhrzeit ----
         Label:
             id: clocklbl
@@ -281,7 +287,36 @@ KV = f"""
 Dashboard:
 """
 
+# -------------------------------------------------------
+# 🔵 Kleine Status-LED für BT / Polling
+# -------------------------------------------------------
+class BtLedWidget(BoxLayout):
+    """Echte Bluetooth/Polling-Status-LED für Dashboard Header"""
+    def __init__(self, chart_mgr=None, **kwargs):
+        super().__init__(orientation="vertical", size_hint_x=None, width=dp(20), **kwargs)
+        self.chart_mgr = chart_mgr
+        self._state = "off"  # off / on
+        with self.canvas:
+            self._color = Color(0.4, 0.1, 0.1, 1)  # dunkelrot: inaktiv
+            self._circle = Ellipse(size=(dp(14), dp(14)))
+        self.bind(pos=self._update_pos, size=self._update_pos)
+        Clock.schedule_interval(self._update_led, 0.8)
 
+    def _update_pos(self, *_):
+        self._circle.pos = (self.x + dp(3), self.y + (self.height - dp(14)) / 2)
+
+    def _update_led(self, *_):
+        mgr = self.chart_mgr
+        active = bool(getattr(mgr, "running", False))
+        # Wenn kein ChartManager existiert oder nie gestartet: LED bleibt rot/dunkel
+        if not mgr or not active:
+            if self._state != "off":
+                self._color.rgba = (0.4, 0.1, 0.1, 1)
+                self._state = "off"
+        else:
+            if self._state != "on":
+                self._color.rgba = (0.0, 1.0, 0.0, 1)
+                self._state = "on"
 # -------------------------------------------------------
 # Widgets
 # -------------------------------------------------------
@@ -289,7 +324,26 @@ class Header(BoxLayout):
     led_color = ListProperty([0, 1, 0, 1])
     status_text = StringProperty("📡 Live-Polling aktiv")
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        try:
+            from kivy.app import App
+            app = App.get_running_app()
+            chart_mgr = getattr(app, "chart_mgr", None)
+        except Exception:
+            chart_mgr = None
 
+        # ✅ LED sofort beim Header erzeugen
+        Clock.schedule_once(lambda dt: self._insert_led(chart_mgr), 0.2)
+
+    def _insert_led(self, chart_mgr):
+        try:
+            led = BtLedWidget(chart_mgr=chart_mgr)
+            self.add_widget(led)
+            print("💡 Header-LED initialisiert.")
+        except Exception as e:
+            print("⚠️ Header-LED-Fehler:", e)
+            
 class Tile(BoxLayout):
     title = StringProperty("Title")
     value_text = StringProperty("--")
@@ -362,7 +416,31 @@ def create_dashboard():
             return Label(text="⚠️ Fehler im KV-Layout – kein Dashboard",
                          font_size="22sp", color=(1, 0, 0, 1))
         print("✅ Dashboard erfolgreich geladen!")
+
+        # -------------------------------------------------------
+        # 💡 BT-LED nachträglich in den Header einsetzen
+        # -------------------------------------------------------
+        try:
+            from kivy.clock import Clock
+            def _insert_led(*_):
+                from dashboard_gui import BtLedWidget  # <— FIXED IMPORT
+                from kivy.app import App
+                app = App.get_running_app()
+                hdr = root.ids.header
+                if hdr and "bt_led_placeholder" in hdr.ids:
+                    led = BtLedWidget(getattr(app, "chart_mgr", None))
+                    parent = hdr.ids.bt_led_placeholder.parent
+                    parent.remove_widget(hdr.ids.bt_led_placeholder)
+                    parent.add_widget(led)
+                    print("💡 BT-LED erfolgreich in Header eingesetzt.")
+                else:
+                    print("⚠️ Kein bt_led_placeholder gefunden!")
+            Clock.schedule_once(_insert_led, 0.5)
+        except Exception as e:
+            print(f"⚠️ LED-Insert-Fehler: {e}")
+
         return root
+
     except Exception as e:
         import traceback
         print("💥 Fehler beim Laden des KV:\n", traceback.format_exc())

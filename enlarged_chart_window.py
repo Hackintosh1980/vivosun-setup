@@ -165,67 +165,103 @@ class EnlargedChartWindow(BoxLayout):
         # Controls
         controls = BoxLayout(orientation="horizontal", size_hint_y=None,
                              height=dp_scaled(58), spacing=dp_scaled(8),
-                             padding=[dp_scaled(8)]*4)
-        def _btn(text,bg,cb,w=None,fs=16):
-            b = Button(markup=True, text=text, font_size=sp_scaled(fs),
-                       background_normal="", background_color=bg,
-                       on_release=lambda *_: cb())
-            if w: b.size_hint_x=None; b.width=dp_scaled(w)
-            return b
-        controls.add_widget(_btn("[font=FA]\uf060[/font]",(0.25,0.45,0.28,1),lambda: self._switch(-1),58))
-        controls.add_widget(_btn("[font=FA]\uf061[/font]",(0.25,0.45,0.28,1),lambda: self._switch(+1),58))
-        controls.add_widget(_btn("[font=FA]\uf021[/font] Reset",(0.25,0.55,0.25,1),self._do_reset))
-        controls.add_widget(_btn("[font=FA]\uf04d[/font] Stop",(0.35,0.3,0.3,1),self._do_stop))
-        controls.add_widget(_btn("[font=FA]\uf04b[/font] Start",(0.3,0.45,0.35,1),self._do_start))
-        controls.add_widget(_btn("[font=FA]\uf015[/font] Dashboard",(0.35,0.28,0.28,1),self._close_view))
+                             padding=[dp_scaled(8)] * 4)
+
+        def _btn(text, bg, cb, w=None, fs=16):
+                b = Button(markup=True, text=text, font_size=sp_scaled(fs),
+                           background_normal="", background_color=bg)
+                if w:
+                        b.size_hint_x = None
+                        b.width = dp_scaled(w)
+                b.bind(on_release=lambda *_: cb(b))
+                return b
+
+        controls.add_widget(_btn("[font=FA]\uf060[/font]", (0.25, 0.45, 0.28, 1),
+                                 lambda *_: self._switch(-1), 58))
+        controls.add_widget(_btn("[font=FA]\uf061[/font]", (0.25, 0.45, 0.28, 1),
+                                 lambda *_: self._switch(+1), 58))
+        controls.add_widget(_btn("[font=FA]\uf021[/font] Reset",
+                                 (0.25, 0.55, 0.25, 1), self._do_reset))
+
+        # --- dynamischer Start/Stop-Button ---
+        self._btn_startstop = _btn("[font=FA]\uf04d[/font] Stop",
+                                   (0.6, 0.2, 0.2, 1),
+                                   self._toggle_startstop)
+        controls.add_widget(self._btn_startstop)
+        # ---
+
+        controls.add_widget(_btn("[font=FA]\uf015[/font] Dashboard",
+                                 (0.35, 0.28, 0.28, 1), self._close_view))
         self.add_widget(controls)
 
+        
+
     # ----------------------------------------------------
-    # Live update loop
+    # Live update loop (Freeze-Logik wie Dashboard)
     # ----------------------------------------------------
-    def _update_chart(self,*_):
+    def _update_chart(self, *_):
         try:
-            buf = self.chart_mgr.buffers.get(self.tile_key, [])
-            clean = [(x,y) for x,y in buf if isinstance(y,(int,float)) and y>INVALID_SENTINEL]
-
-            # LED state based on ChartManager
-            active = bool(getattr(self.chart_mgr,"running",True))
-            self._led_color.rgba = (0,1,0,1) if active else (1,0,0,1)
-
-            if not active:
-                self._value_lbl.text = "--"
-                if self._graph_ok: self.plot.points = []
+            mgr = self.chart_mgr
+            if not mgr:
                 return
 
+            active = bool(getattr(mgr, "running", False))
+            paused = bool(getattr(mgr, "_user_paused", False))
+
+            # LED-State
+            if paused:
+                self._led_color.rgba = (1.0, 0.9, 0.1, 1)   # gelb = pausiert
+            elif active:
+                self._led_color.rgba = (0.0, 1.0, 0.0, 1)   # grün = aktiv
+            else:
+                self._led_color.rgba = (0.4, 0.1, 0.1, 1)   # rot = aus
+
+            buf = mgr.buffers.get(self.tile_key, [])
+            clean = [(x, y) for x, y in buf if isinstance(y, (int, float)) and y > INVALID_SENTINEL]
+
+            # Bei Stop oder Pause: Anzeige eingefroren, keine Löschung
+            if not active or paused:
+                if clean:
+                    unit = self._unit_for_key(self.tile_key)
+                    self._value_lbl.text = f"{clean[-1][1]:.2f} {unit}"
+                    if self._graph_ok:
+                        self.plot.points = clean
+                return
+
+            # Normaler Live-Betrieb
             if not clean:
-                self._value_lbl.text="--"
-                if self._graph_ok: self.plot.points=[]
+                self._value_lbl.text = "--"
+                if self._graph_ok:
+                    self.plot.points = []
                 return
 
             if self._graph_ok:
                 self.plot.points = clean
-                ys=[y for _,y in clean]; ymin,ymax=min(ys),max(ys)
-                if abs(ymax-ymin)<1e-6: ymax=ymin+0.5; ymin=ymin-0.5
-                margin=max((ymax-ymin)*0.2,0.2)
-                self.graph.ymin=round(ymin-margin,2)
-                self.graph.ymax=round(ymax+margin,2)
-                cw=int(getattr(self.chart_mgr,"chart_window",120) or 120)
-                last_x=clean[-1][0]
-                self.graph.xmax=max(last_x,cw)
-                self.graph.xmin=max(0,self.graph.xmax-cw)
-                unit=self._unit_for_key(self.tile_key)
-                self._value_lbl.text=f"{clean[-1][1]:.2f} {unit}"
+                ys = [y for _, y in clean]
+                y_min, y_max = min(ys), max(ys)
+                if abs(y_max - y_min) < 1e-6:
+                    y_min, y_max = y_min - 0.5, y_max + 0.5
+                margin = max((y_max - y_min) * 0.2, 0.2)
+                self.graph.ymin = round(y_min - margin, 2)
+                self.graph.ymax = round(y_max + margin, 2)
+                cw = int(getattr(mgr, "chart_window", 120) or 120)
+                last_x = clean[-1][0]
+                self.graph.xmax = max(last_x, cw)
+                self.graph.xmin = max(0, self.graph.xmax - cw)
+                unit = self._unit_for_key(self.tile_key)
+                self._value_lbl.text = f"{clean[-1][1]:.2f} {unit}"
 
-            # Header info
+            # Header Info (MAC + RSSI)
             app = self._get_app_safe()
-            self._mac_lbl.text = str(getattr(app,"current_mac",None)
-                                     or getattr(self.chart_mgr,"cfg",{}).get("device_id","--"))
-            rssi = getattr(app,"last_rssi",None)
-            self._rssi_lbl.text = f"{int(rssi)} dBm" if isinstance(rssi,(int,float)) else "-- dBm"
+            self._mac_lbl.text = str(getattr(app, "current_mac", None)
+                                     or getattr(mgr, "cfg", {}).get("device_id", "--"))
+            rssi = getattr(app, "last_rssi", None)
+            self._rssi_lbl.text = f"{int(rssi)} dBm" if isinstance(rssi, (int, float)) else "-- dBm"
+
         except Exception as e:
             if not self._stale_warned:
                 print("⚠️ Enlarged update error:", e)
-                self._stale_warned=True
+                self._stale_warned = True
 
     # ----------------------------------------------------
     def _get_app_safe(self):
@@ -233,58 +269,93 @@ class EnlargedChartWindow(BoxLayout):
             from kivy.app import App
             return App.get_running_app()
         except Exception:
-            return type("X",(),{})()
+            return type("X", (), {})()
 
     # ----------------------------------------------------
     # Actions
     # ----------------------------------------------------
-    def _switch(self,dir):
-        allowed=self._allowed_keys_now()
-        if not allowed: return
-        idx=allowed.index(self.tile_key) if self.tile_key in allowed else 0
-        idx=(idx+dir)%len(allowed)
-        self.tile_key=allowed[idx]
-        self._refresh_titles_and_colors(); self._update_chart()
+    def _switch(self, dir):
+        allowed = self._allowed_keys_now()
+        if not allowed:
+            return
+        idx = allowed.index(self.tile_key) if self.tile_key in allowed else 0
+        idx = (idx + dir) % len(allowed)
+        self.tile_key = allowed[idx]
+        self._refresh_titles_and_colors()
+        self._update_chart()
 
     def _refresh_titles_and_colors(self):
-        title=self._title(self.tile_key); unit=self._unit_for_key(self.tile_key)
-        self._title_lbl.text=f"[b]{title}[/b]"
+        title = self._title(self.tile_key)
+        unit = self._unit_for_key(self.tile_key)
+        self._title_lbl.text = f"[b]{title}[/b]"
         if self._graph_ok:
-            self.graph.ylabel=f"{title} ({unit})"
-            rgb=COLOR_MAP.get(self.tile_key,(0.4,1.0,0.6))
+            self.graph.ylabel = f"{title} ({unit})"
+            rgb = COLOR_MAP.get(self.tile_key, (0.4, 1.0, 0.6))
             try:
-                if self.plot in self.graph.plots: self.graph.remove_plot(self.plot)
-            except Exception: pass
-            self.plot=LinePlot(color=(rgb[0],rgb[1],rgb[2],1))
-            self.plot.line_width=4.0
+                if self.plot in self.graph.plots:
+                    self.graph.remove_plot(self.plot)
+            except Exception:
+                pass
+            self.plot = LinePlot(color=(rgb[0], rgb[1], rgb[2], 1))
+            self.plot.line_width = 4.0
             self.graph.add_plot(self.plot)
-            self.graph.tick_color=(rgb[0]*0.7,rgb[1]*0.9,rgb[2]*0.7,1)
+            self.graph.tick_color = (rgb[0] * 0.7, rgb[1] * 0.9, rgb[2] * 0.7, 1)
 
     def _do_reset(self):
         try:
-            if hasattr(self.chart_mgr,"reset_data"): self.chart_mgr.reset_data()
-            if self._graph_ok: self.plot.points=[]
-            self._value_lbl.text="--"
+            if hasattr(self.chart_mgr, "reset_data"):
+                self.chart_mgr.reset_data()
+            if self._graph_ok:
+                self.plot.points = []
+            self._value_lbl.text = "--"
         except Exception:
             traceback.print_exc()
 
     def _do_stop(self):
-        if hasattr(self.chart_mgr,"stop_polling"):
-            self.chart_mgr.stop_polling()
-            print("⏸️ Enlarged → ChartManager gestoppt")
+        """Manuell pausieren (wie Dashboard)."""
+        if hasattr(self.chart_mgr, "user_stop"):
+            self.chart_mgr.user_stop()
+            self._led_color.rgba = (1.0, 0.9, 0.1, 1)
+            print("⏸️ Enlarged → Charts eingefroren (user_stop).")
 
     def _do_start(self):
-        if hasattr(self.chart_mgr,"start_polling"):
-            self.chart_mgr.start_polling()
-            print("▶️ Enlarged → ChartManager gestartet")
+        """Manuell fortsetzen (wie Dashboard)."""
+        if hasattr(self.chart_mgr, "user_start"):
+            self.chart_mgr.user_start()
+            self._led_color.rgba = (0.0, 1.0, 0.0, 1)
+            print("▶️ Enlarged → Polling fortgesetzt (user_start).")
 
-    def _close_view(self,*_):
-        parent=self.parent
-        while parent and not isinstance(parent,ModalView): parent=parent.parent
+    def _close_view(self, *_):
+        parent = self.parent
+        while parent and not isinstance(parent, ModalView):
+            parent = parent.parent
         if parent:
-            try: Clock.unschedule(self._update_chart)
-            except Exception: pass
+            try:
+                Clock.unschedule(self._update_chart)
+            except Exception:
+                pass
             parent.dismiss()
+
+    def _toggle_startstop(self, button):
+        """Start/Stop-Button wie im Dashboard – synchron zur ChartManager-Logik."""
+        if not hasattr(self, "chart_mgr"):
+            return
+        mgr = self.chart_mgr
+        running = getattr(mgr, "running", True)
+        if running:
+            if hasattr(mgr, "user_stop"):
+                mgr.user_stop()
+            button.text = "[font=FA]\uf04b[/font] Start"
+            button.background_color = (0.2, 0.6, 0.2, 1)
+            self._led_color.rgba = (1.0, 0.9, 0.1, 1)  # gelb = pausiert
+            print("⏸️ Enlarged → Charts eingefroren (user_stop)")
+        else:
+            if hasattr(mgr, "user_start"):
+                mgr.user_start()
+            button.text = "[font=FA]\uf04d[/font] Stop"
+            button.background_color = (0.6, 0.2, 0.2, 1)
+            self._led_color.rgba = (0.0, 1.0, 0.0, 1)  # grün = aktiv
+            print("▶️ Enlarged → Polling fortgesetzt (user_start)")            
 
 # ----------------------------------------------------
     # Touch-Swipe (links/rechts zum Umschalten)
