@@ -179,17 +179,15 @@ class ChartManager:
         base_dir = os.path.join(os.path.dirname(__file__), "assets")
         default_bg = os.path.join(base_dir, "tiles_bg.png")
 
-        # kleine Map, falls du später pro Tile andere BGs willst
         bg_map = {
             "tile_t_in":   os.path.join(base_dir, "tile_bg_temp_in.png"),
             "tile_h_in":   os.path.join(base_dir, "tile_bg_hum_in.png"),
             "tile_vpd_in": os.path.join(base_dir, "tile_bg_vpd_in.png"),
             "tile_t_out":  os.path.join(base_dir, "tile_bg_temp_out.png"),
             "tile_h_out":  os.path.join(base_dir, "tile_bg_hum_out.png"),
-            "tile_vpd_out":os.path.join(base_dir, "tile_bg_vpd_out.png"),
+            "tile_vpd_out": os.path.join(base_dir, "tile_bg_vpd_out.png"),
         }
 
-        # stash für direkten Zugriff im Append
         if not hasattr(self, "graphs"):
             self.graphs: Dict[str, Any] = {}
 
@@ -204,13 +202,13 @@ class ChartManager:
                 print(f"⚠️ Kein Graph in {key}")
                 continue
 
-            # Hintergrund über Canvas (keine Widgets)
+            # Hintergrundbild über Canvas (kein Widget-Reparent)
             bg_path = bg_map.get(key, default_bg)
             if os.path.exists(bg_path):
                 self._apply_tile_bg(tile, bg_path)
                 print(f"🖼️ {key}: BG aktiv → {os.path.basename(bg_path)}")
 
-            # Graph-Style vereinheitlichen
+            # Graph-Style: minimalistisch + weich
             try:
                 graph.draw_ticks = False
                 graph.draw_labels = False
@@ -222,82 +220,38 @@ class ChartManager:
             except Exception:
                 pass
 
-            # Plot initialisieren (nur einmal)
+            # Plot initialisieren (einmalig)
             if key not in self.plots:
                 accent = getattr(tile, "accent", (0.7, 1.0, 0.7))
-                plot = LinePlot(color=(*accent, 1), line_width=5.0)
+                plot = LinePlot(color=(*accent, 1.0), line_width=4.5)
                 graph.add_plot(plot)
                 self.plots[key] = plot
                 self.buffers[key] = []
 
-            # Grundachsen vorbereiten
+            # Grundachsen
             graph.ymin, graph.ymax = 0, 1
             graph.xmin, graph.xmax = 0, max(1, self.chart_window)
 
-            # Sync Graph auf Tile-Größe
+            # sanfte Schattenkante hinter der Linie
+            with graph.canvas.before:
+                from kivy.graphics import Color, Line
+                Color(0, 0, 0, 0.25)
+                shadow_line = Line(points=plot.points, width=plot.line_width + 1.2, cap='round')
+
+            def _sync_shadow(*_):
+                try:
+                    shadow_line.points = plot.points
+                except Exception:
+                    pass
+            plot.bind(points=_sync_shadow)
+
+            # Größe synchronisieren
             def _sync_graph(*_):
                 graph.size = tile.size
                 graph.pos = tile.pos
-
             tile.bind(size=_sync_graph, pos=_sync_graph)
             Clock.schedule_once(_sync_graph, 0)
 
-            # Merker für später
-            self.graphs[key] = graph
-             
-        # stash für direkten Zugriff im Append
-        if not hasattr(self, "graphs"):
-            self.graphs: Dict[str, Any] = {}
-
-        for key in self._tile_keys_int + self._tile_keys_ext:
-            tile  = self.dashboard.ids.get(key)
-            if not tile:
-                print(f"⚠️ Tile nicht gefunden: {key}")
-                continue
-
-            graph = getattr(tile.ids, "g", None)
-            if graph is None:
-                print(f"⚠️ Kein Graph in {key}")
-                continue
-
-            # 1) Hintergrund nur über Canvas (kein Widget anfassen)
-            bg_path = bg_map.get(key) or default_bg
-            if os.path.exists(bg_path):
-                self._apply_tile_bg(tile, bg_path)
-                print(f"🖼️ {key}: BG aktiv → {os.path.basename(bg_path)}")
-
-            # 2) Graph optisch ruhigstellen & vollflächig machen
-            try:
-                graph.draw_ticks = False
-                graph.draw_labels = False
-                graph.draw_border = False
-                graph.tick_color = (0, 0, 0, 0)
-                graph.background_color = (0, 0, 0, 0)
-                graph.size_hint = (1, 1)
-                graph.pos_hint = {"x": 0, "y": 0}
-            except Exception:
-                pass
-
-            # 3) Plot anlegen, wenn nicht vorhanden
-            if key not in self.plots:
-                accent = getattr(tile, "accent", (0.7, 1.0, 0.7))
-                plot = LinePlot(color=(*accent, 1), line_width=5.0)
-                graph.add_plot(plot)
-                self.plots[key] = plot
-                self.buffers[key] = []
-
-            # 4) Grundachsen
-            graph.ymin, graph.ymax = 0, 1
-            graph.xmin, graph.xmax = 0, max(1, self.chart_window)
-
-            # 5) Sync Graph auf Tile-Größe (ohne Reparent)
-            def _sync_graph(*_):
-                graph.size = tile.size
-                graph.pos  = tile.pos
-            tile.bind(size=_sync_graph, pos=_sync_graph)
-            Clock.schedule_once(_sync_graph, 0)
-
-            # 6) Merker
             self.graphs[key] = graph
 
     # ------------------------------
@@ -744,12 +698,16 @@ class ChartManager:
         if len(buf) > self.chart_window:
             del buf[:-self.chart_window]
 
-        plot = self.plots.get(key)
-        if plot:
-            # neue Liste zuweisen → GPU-Leak-Fix
-            plot.points = buf[:]
+        # Haupt- und Glow-Plot synchron updaten
+        main_plot = self.plots.get(key)
+        glow_plot = getattr(self, "plots_glow", {}).get(key)
 
-        # Fenster gleiten lassen, unabhängig von counter-Start
+        if main_plot:
+            main_plot.points = buf[:]
+        if glow_plot:
+            glow_plot.points = buf[:]
+
+        # Fenster gleiten lassen, unabhängig vom Counter-Start
         graph = getattr(self, "graphs", {}).get(key)
         if graph:
             n = len(buf)
@@ -761,7 +719,7 @@ class ChartManager:
                 graph.xmin = x_min
                 graph.xmax = max(graph.xmin + 1, x_max)
 
-            # Y automatisch skalieren
+            # Y-Achse automatisch skalieren
             self._auto_scale_y(graph, key)
     # ------------------------------
     # Reset & Config-Reload
@@ -803,16 +761,22 @@ class ChartManager:
             vals = [v for _, v in self.buffers.get(key, []) if isinstance(v, (int, float))]
             if not vals:
                 return
+
             y_min, y_max = min(vals), max(vals)
 
             # Falls alle Werte gleich → minimaler Bereich
             if abs(y_max - y_min) < 1e-6:
                 y_min, y_max = y_min - 0.5, y_max + 0.5
 
-            # 20 % Sicherheitsabstand oben/unten
-            margin = max((y_max - y_min) * 0.2, 0.2)
-            graph.ymin = round(y_min - margin, 1)
-            graph.ymax = round(y_max + margin, 1)
+            # Dynamischerer Bereich – etwas großzügiger für "lebendiges" Pulsieren
+            margin = max((y_max - y_min) * 0.5, 0.3)
+            new_ymin = round(y_min - margin, 1)
+            new_ymax = round(y_max + margin, 1)
+
+            # --- sanftes Nachziehen über Animation ---
+            from kivy.animation import Animation
+            anim = Animation(ymin=new_ymin, ymax=new_ymax, d=0.4, t="out_quad")
+            anim.start(graph)
 
             # X-Achse gleitend halten
             if self.counter >= self.chart_window:
@@ -821,9 +785,9 @@ class ChartManager:
             else:
                 graph.xmin = 0
                 graph.xmax = self.chart_window
+
         except Exception as e:
             print(f"⚠️ Auto-Scale-Fehler ({key}): {e}")
-
     # ------------------------------
     # Kein-Daten-Labels (Fallback)
     # ------------------------------

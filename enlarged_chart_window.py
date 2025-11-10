@@ -63,6 +63,18 @@ COLOR_MAP = {
 INVALID_SENTINEL = -90.0
 
 # ----------------------------------------------------
+# Hintergrundbilder pro Tile (adaptive BGS)
+# ----------------------------------------------------
+BG_MAP = {
+    "tile_t_in":   "tile_bg_temp_in.png",
+    "tile_h_in":   "tile_bg_hum_in.png",
+    "tile_vpd_in": "tile_bg_vpd_in.png",
+    "tile_t_out":  "tile_bg_temp_out.png",
+    "tile_h_out":  "tile_bg_hum_out.png",
+    "tile_vpd_out":"tile_bg_vpd_out.png",
+}
+
+# ----------------------------------------------------
 # EnlargedChartWindow
 # ----------------------------------------------------
 class EnlargedChartWindow(BoxLayout):
@@ -135,11 +147,11 @@ class EnlargedChartWindow(BoxLayout):
             spacing=dp_scaled(8)
         )
 
-        # 💚 Leicht durchsichtiger grüner Hintergrund
+        # 🖤 Halbtransparenter dunkler Header – wie im Scatter-Window
         with header.canvas.before:
-            Color(0.0, 0.3, 0.1, 0.45)  # R,G,B,Alpha (Alpha=Transparenz)
+            Color(0, 0, 0, 0.35)  # nur 35 % Deckkraft
             self._header_bg = Rectangle(size=header.size, pos=header.pos)
-
+            
         # Dynamisch mit Fenstergröße mitwachsen
         header.bind(size=lambda *_: setattr(self._header_bg, "size", header.size))
         header.bind(pos=lambda *_: setattr(self._header_bg, "pos", header.pos))
@@ -189,53 +201,77 @@ class EnlargedChartWindow(BoxLayout):
         self.add_widget(header)
 
         
-        # Graph (transparent) mit stabilem Hintergrundbild darunter – Logik unverändert
+        # Graph (transparent) mit stabilem, tile-spezifischem Hintergrund darunter
         try:
-            # Wrapper für Bild + Graph (keine weitere Logik anrühren)
             from kivy.uix.floatlayout import FloatLayout
             from kivy.uix.image import Image
 
-            wrapper = FloatLayout(size_hint_y=1.0)
+            self._wrapper = FloatLayout(size_hint_y=1.0)
 
-            # Hintergrundbild laden (füllt den Wrapper)
-            bg_path = os.path.join(BASE_DIR, "assets", "tiles_bg.png")
-            if os.path.exists(bg_path):
-                bg_img = Image(
-                    source=bg_path,
-                    fit_mode="fill",           # modern statt keep_ratio/allow_stretch
-                    size_hint=(1, 1),
-                    pos_hint={"x": 0, "y": 0}
-                )
-                wrapper.add_widget(bg_img)
-                print(f"🖼️ Hintergrund aktiv: {bg_path}")
-            else:
-                print("⚠️ tiles_bg.png nicht gefunden!")
+            # ---- tile-spezifisches BG wählen (Fallback: tiles_bg.png)
+            def _resolve_bg_path(key):
+                bg_file = BG_MAP.get(key, "tiles_bg.png")
+                cand = os.path.join(BASE_DIR, "assets", bg_file)
+                return cand if os.path.exists(cand) else os.path.join(BASE_DIR, "assets", "tiles_bg.png")
 
-            # Dein Graph – identische Achsen/Parameter, aber transparenter Hintergrund
+            bg_path = _resolve_bg_path(self.tile_key)
+            self._bg_img = Image(
+                source=bg_path,
+                fit_mode="fill",
+                size_hint=(1, 1),
+                pos_hint={"x": 0, "y": 0},
+                opacity=1.0,
+            )
+            self._wrapper.add_widget(self._bg_img)
+
+            # Graph komplett clean (keine Achsen, keine Striche, kein Rahmen)
             self.graph = Graph(
-                xlabel="Time", ylabel="",
-                x_ticks_major=10, y_ticks_major=0.5,
-                background_color=(0, 0, 0, 0),   # transparent über dem Bild
-                tick_color=(0.3, 0.8, 0.4, 1),
+                xlabel="", ylabel="",
+                x_ticks_major=0, y_ticks_major=0,
+                x_grid=False, y_grid=False,
                 draw_border=False,
+                background_color=(0, 0, 0, 0),
+                tick_color=(0, 0, 0, 0),
                 xmin=0, xmax=60, ymin=0, ymax=1,
                 size_hint_y=1.0
             )
 
-            # Dein dicker Mesh-Plot (VIVOSUN-Look)
+            # 🧼 Nachträgliche Deaktivierung – für ältere Garden-Versionen
+            try:
+                self.graph.draw_ticks = False
+                self.graph.draw_labels = False
+                self.graph.draw_border = False
+                self.graph.x_grid = False
+                self.graph.y_grid = False
+                self.graph.x_ticks_major = 0
+                self.graph.y_ticks_major = 0
+            except Exception:
+                pass
+
+            # VIVOSUN-Linie
             self.plot = MeshLinePlot(color=(0.8, 1.0, 0.8, 1))
-            self.plot.line_width = 5.5
+            self.plot.line_width = 8.0
             self.graph.add_plot(self.plot)
 
             # Reihenfolge: erst Bild, dann Graph
-            wrapper.add_widget(self.graph)
+            self._wrapper.add_widget(self.graph)
 
-            # Wrapper statt Graph direkt einhängen (Buttons/Logik bleiben unberührt)
-            self.add_widget(wrapper)
+            # Wrapper einhängen
+            self.add_widget(self._wrapper, index=0)
+
+            # Falls Textur beim ersten Frame noch nicht fertig ist → kurz nacheifern
+            def _sync_bg_image(*_):
+                if self._bg_img and getattr(self._bg_img, "texture", None):
+                    self._bg_img.opacity = 1.0
+                else:
+                    Clock.schedule_once(_sync_bg_image, 0.2)
+            Clock.schedule_once(_sync_bg_image, 0.2)
 
         except Exception as e:
             self._graph_ok = False
             self.add_widget(Label(text=f"⚠️ Graph not supported: {e}", color=(1, 0.8, 0.6, 1)))
+
+
         # Controls
         controls = BoxLayout(
             orientation="horizontal", size_hint_y=None,
@@ -336,9 +372,14 @@ class EnlargedChartWindow(BoxLayout):
                 y_min, y_max = min(ys), max(ys)
                 if abs(y_max - y_min) < 1e-6:
                     y_min, y_max = y_min - 0.5, y_max + 0.5
-                margin = max((y_max - y_min) * 0.2, 0.2)
-                self.graph.ymin = round(y_min - margin, 2)
-                self.graph.ymax = round(y_max + margin, 2)
+
+                # --- sanftes dynamisches Nachziehen der Y-Achse (lebendig) ---
+                margin = max((y_max - y_min) * 0.45, 0.25)
+                new_ymin = round(y_min - margin, 2)
+                new_ymax = round(y_max + margin, 2)
+                from kivy.animation import Animation
+                Animation(ymin=new_ymin, ymax=new_ymax, d=0.4, t="out_quad").start(self.graph)
+
                 cw = int(getattr(mgr, "chart_window", 120) or 120)
                 last_x = clean[-1][0]
                 self.graph.xmax = max(last_x, cw)
@@ -356,7 +397,7 @@ class EnlargedChartWindow(BoxLayout):
             if not self._stale_warned:
                 print("⚠️ Enlarged update error:", e)
                 self._stale_warned = True
-
+                
     # ----------------------------------------------------
     def _get_app_safe(self):
         try:
@@ -403,13 +444,26 @@ class EnlargedChartWindow(BoxLayout):
                         self.graph.remove_plot(self.plot)
                 except Exception:
                     pass
+
                 # neuen Plot setzen
                 self.plot = LinePlot(color=(rgb[0], rgb[1], rgb[2], 1), line_width=4.0)
                 self.graph.add_plot(self.plot)
                 self.graph.tick_color = (rgb[0]*0.7, rgb[1]*0.9, rgb[2]*0.7, 1)
+
+                # --- Hintergrundbild an neuen tile_key anpassen ---
+                try:
+                    bg_file = BG_MAP.get(self.tile_key, "tiles_bg.png")
+                    new_path = os.path.join(BASE_DIR, "assets", bg_file)
+                    if not os.path.exists(new_path):
+                        new_path = os.path.join(BASE_DIR, "assets", "tiles_bg.png")
+                    if hasattr(self, "_bg_img"):
+                        self._bg_img.source = new_path
+                        self._bg_img.reload()
+                except Exception:
+                    pass
+
             except Exception:
                 pass
-
     # ----------------------------------------------------
     # Aktionen
     # ----------------------------------------------------

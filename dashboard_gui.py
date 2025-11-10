@@ -26,7 +26,7 @@ import config
 if platform == "android":
     UI_SCALE = 0.7
 else:
-    UI_SCALE = 0.7
+    UI_SCALE = 1.0
 
 def sp_scaled(v): 
     return f"{int(v * UI_SCALE)}sp"
@@ -71,7 +71,7 @@ KV = f"""
         # ---- Titel links ----
         Label:
             markup: True
-            text: "[font=FA]\\uf06d[/font]  Ultimate Thermo Dashboard v3.6"
+            text: "[font=FA]\\uf06d[/font]  Thermo Dashboard v3.6"
             bold: True
             font_size: "13sp"
             color: 0.90, 1, 0.92, 1
