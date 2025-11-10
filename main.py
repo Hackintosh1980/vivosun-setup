@@ -168,7 +168,22 @@ class VivosunApp(App):
                 header.ids.rssi_value.text = f"{int(self.last_rssi)} dBm"
         except Exception:
             pass
-
+# --- Auto-Start bei Erstlauf (MAC sichtbar, aber noch kein Start) ---
+        try:
+            cfg_path = os.path.join(os.getcwd(), "config.json")
+            if mac not in ("--", None) and not os.path.exists(cfg_path):
+                cfg = {"device_id": mac, "unit": "°C", "autostart": True}
+                with open(cfg_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+                self.current_mac = mac
+                if hasattr(self, "chart_mgr") and self.chart_mgr:
+                    if hasattr(self.chart_mgr, "load_config"):
+                        self.chart_mgr.load_config(cfg)
+                    if hasattr(self.chart_mgr, "user_start"):
+                        self.chart_mgr.user_start()
+                    print(f"🚀 Auto-Start ausgelöst für erstes Gerät: {mac}")
+        except Exception as e:
+            print("⚠️ Auto-Start im Header fehlgeschlagen:", e)
     
 
     # ---------------------------------------------------
