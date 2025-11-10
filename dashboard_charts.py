@@ -4,23 +4,6 @@
 dashboard_charts.py – FINAL ONE-FILE DROP-IN (Nov 2025)
 VIVOSUN Dashboard – Cross-Platform BLE Monitor
 © 2025 Dominik Rosenthal (Hackintosh1980)
-
-Features
---------
-• 3/6-Tile-Dashboard mit Auto-Layout (externer Fühler)
-• Watchdog:
-    – Freeze bei Datenstille (keine neuen Punkte)
-    – Auto-Stop des Pollings (config.allow_auto_stop)
-    – Auto-Recovery bei JEDEM Counter-Wechsel (auch Reset/Wrap)
-• Manuelle Steuerung: user_stop() / user_start() / reset_data() / reload_config()
-• Konfigurierbar über config.json:
-    - refresh_interval: float (s)
-    - chart_window: int (Punkte)
-    - stale_timeout: float (s)  ← NEU
-    - allow_auto_stop: bool
-• MAC + RSSI im Header (mit Farblogik)
-• Keine JSON-Löschung
-• Ruhige Logs
 """
 
 from __future__ import annotations
@@ -33,6 +16,8 @@ from kivy_garden.graph import LinePlot
 from kivy.utils import platform
 from kivy.metrics import dp
 from kivy.app import App
+from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.image import Image
 
 import config, utils
 
@@ -42,7 +27,6 @@ import config, utils
 # ======================================================================
 
 def get_unit_for_key(key: str) -> str:
-    """Einheit passend zum Tile-Key; liest 'unit' (°C/°F) aus config.json."""
     try:
         cfg = config.load_config() or {}
         unit_str = str(cfg.get("unit", "°C"))
@@ -60,7 +44,7 @@ def get_unit_for_key(key: str) -> str:
 
 
 # ======================================================================
-# APP_JSON Pfad (Android/Desktop robust)
+# APP_JSON Pfad
 # ======================================================================
 
 def _resolve_app_json() -> str:
@@ -87,7 +71,6 @@ if platform != "android":
 
 class ChartManager:
     """
-    Zentrale Dashboard-Logik: Polling, Parsing, Anzeige, Watchdog, Start/Stop, Recovery.
     Erwartete Dashboard-IDs:
       - root.ids["grid"]             → GridLayout mit 6 Kacheln
       - tile.ids["g"]                → kivy_garden.graph.Graph
@@ -95,52 +78,40 @@ class ChartManager:
       - screen('dashboard').ids.header.{device_label, rssi_value}
     """
 
-    # ------------------------------
-    # Konstruktor
-    # ------------------------------
     def __init__(self, dashboard):
         self.dashboard = dashboard
 
-        # Chart-Puffer + Plot-Objekte
         self.buffers: Dict[str, List[Tuple[int, float]]] = {}
         self.plots: Dict[str, LinePlot] = {}
         self.counter: int = 0
 
-        # Laufstatus
         self.running: bool = True
         self._poll_event = None
         self._bridge_started: bool = False
 
-        # Watchdog / Flow-Tracking
-        self._last_pkt_seen: Optional[int] = None   # letzter erkannter packet_counter
-        self._last_pkt_time: float = 0.0            # Zeitstempel des letzten Anstiegs
-        self._stale_logged: bool = False            # 1x Warnung je Stale-Phase
+        self._last_pkt_seen: Optional[int] = None
+        self._last_pkt_time: float = 0.0
+        self._stale_logged: bool = False
 
-        # Auto-Stop / Recovery / User-Pause
         self._user_paused: bool = False
         self._last_pkt_at_stop: Optional[int] = None
-        self._recovery_event = None                 # Clock-Event für Recovery-Timer
+        self._recovery_event = None
 
-        # Status/Cache
         self.ext_present: Optional[bool] = None
         self._header_cache: Dict[str, Any] = {"mac": None, "rssi": None}
 
-        # Konfiguration
         self.cfg: Dict[str, Any] = config.load_config() or {}
         self.refresh_interval: float = float(self.cfg.get("refresh_interval", 4.0))
         self.chart_window: int = int(self.cfg.get("chart_window", 120))
-        # NEU: stale_timeout aus config, sonst dynamisch berechnen
         self.stale_timeout: Optional[float] = self._coerce_float(self.cfg.get("stale_timeout"))
         self.allow_auto_stop: bool = bool(self.cfg.get("allow_auto_stop", True))
 
         print(f"🌿 ChartManager init – Poll={self.refresh_interval}s, Window={self.chart_window}, "
               f"Timeout={self._effective_timeout():.1f}s, AutoStop={self.allow_auto_stop}")
 
-        # Tile-Keys
         self._tile_keys_int = ["tile_t_in", "tile_h_in", "tile_vpd_in"]
         self._tile_keys_ext = ["tile_t_out", "tile_h_out", "tile_vpd_out"]
 
-        # Tiles/Plots aufsetzen, Bridge starten, Poll los
         self._init_tiles()
         self._ensure_bridge_started()
         self.start_polling()
@@ -158,49 +129,179 @@ class ChartManager:
             return None
 
     def _effective_timeout(self) -> float:
-        """Benutzt 'stale_timeout' aus config, sonst dynamisch: max(2*refresh, 3.0)."""
         if isinstance(self.stale_timeout, (int, float)) and self.stale_timeout > 0:
             return float(self.stale_timeout)
         return max(self.refresh_interval * 2.0, 3.0)
 
     # ------------------------------
-    # Tiles/Plots initialisieren
+    # Safe helpers for weakproxy widgets
+    # ------------------------------
+    @staticmethod
+    def _safe_ids(tile, name: str):
+        try:
+            return getattr(tile, "ids", {}).get(name)
+        except ReferenceError:
+            return None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_set_text(lbl, txt: str):
+        try:
+            if lbl:
+                lbl.text = txt
+        except ReferenceError:
+            pass
+        except Exception:
+            pass
+
+# --- Canvas-Hintergrund pro Tile: kein Reparent, null Risiko ---
+    def _apply_tile_bg(self, tile, path: str):
+        if not os.path.exists(path):
+            return
+        from kivy.graphics import Color, Rectangle
+
+        # einmalig aufbauen
+        with tile.canvas.before:
+            Color(1, 1, 1, 1)
+            rect = Rectangle(source=path, pos=tile.pos, size=tile.size)
+
+        # bei Resize/Move synchron halten
+        def _sync_bg(*_):
+            rect.pos = tile.pos
+            rect.size = tile.size
+        tile.bind(pos=_sync_bg, size=_sync_bg)
+
+    # ------------------------------
+    # Tiles/Plots initialisieren – stabil (Canvas-BG, kein Reparent)
     # ------------------------------
     def _init_tiles(self) -> None:
+        base_dir = os.path.join(os.path.dirname(__file__), "assets")
+        default_bg = os.path.join(base_dir, "tiles_bg.png")
+
+        # kleine Map, falls du später pro Tile andere BGs willst
+        bg_map = {
+            "tile_t_in":   os.path.join(base_dir, "tile_bg_temp_in.png"),
+            "tile_h_in":   os.path.join(base_dir, "tile_bg_hum_in.png"),
+            "tile_vpd_in": os.path.join(base_dir, "tile_bg_vpd_in.png"),
+            "tile_t_out":  os.path.join(base_dir, "tile_bg_temp_out.png"),
+            "tile_h_out":  os.path.join(base_dir, "tile_bg_hum_out.png"),
+            "tile_vpd_out":os.path.join(base_dir, "tile_bg_vpd_out.png"),
+        }
+
+        # stash für direkten Zugriff im Append
+        if not hasattr(self, "graphs"):
+            self.graphs: Dict[str, Any] = {}
+
         for key in self._tile_keys_int + self._tile_keys_ext:
             tile = self.dashboard.ids.get(key)
             if not tile:
                 print(f"⚠️ Tile nicht gefunden: {key}")
                 continue
 
-            if not hasattr(tile, "base_height") or not getattr(tile, "base_height"):
-                tile.base_height = tile.height if tile.height > 0 else dp(160)
+            graph = getattr(tile.ids, "g", None)
+            if graph is None:
+                print(f"⚠️ Kein Graph in {key}")
+                continue
 
-            graph = tile.ids.g
+            # Hintergrund über Canvas (keine Widgets)
+            bg_path = bg_map.get(key, default_bg)
+            if os.path.exists(bg_path):
+                self._apply_tile_bg(tile, bg_path)
+                print(f"🖼️ {key}: BG aktiv → {os.path.basename(bg_path)}")
 
-            # --- Graph-Styling (keine Achsen, Ticks, Labels, Rahmen) ---
-            graph.draw_ticks = False
-            graph.draw_labels = False
-            graph.tick_color = (0, 0, 0, 0)
-            graph.draw_border = False
-            graph.background_color = (0, 0, 0, 0)
+            # Graph-Style vereinheitlichen
+            try:
+                graph.draw_ticks = False
+                graph.draw_labels = False
+                graph.draw_border = False
+                graph.tick_color = (0, 0, 0, 0)
+                graph.background_color = (0, 0, 0, 0)
+                graph.size_hint = (1, 1)
+                graph.pos_hint = {"x": 0, "y": 0}
+            except Exception:
+                pass
 
-            # --- Plot anlegen ---
-            plot = LinePlot(color=(*tile.accent, 1))
-            plot.line_width = 4.0
-            graph.add_plot(plot)
+            # Plot initialisieren (nur einmal)
+            if key not in self.plots:
+                accent = getattr(tile, "accent", (0.7, 1.0, 0.7))
+                plot = LinePlot(color=(*accent, 1), line_width=3.0)
+                graph.add_plot(plot)
+                self.plots[key] = plot
+                self.buffers[key] = []
 
-            self.plots[key] = plot
-            self.buffers[key] = []
+            # Grundachsen vorbereiten
+            graph.ymin, graph.ymax = 0, 1
+            graph.xmin, graph.xmax = 0, max(1, self.chart_window)
 
-            if graph.ymax == graph.ymin:
-                graph.ymin, graph.ymax = 0, 1
+            # Sync Graph auf Tile-Größe
+            def _sync_graph(*_):
+                graph.size = tile.size
+                graph.pos = tile.pos
 
-            tile.opacity = 1.0
-            tile.disabled = False
+            tile.bind(size=_sync_graph, pos=_sync_graph)
+            Clock.schedule_once(_sync_graph, 0)
+
+            # Merker für später
+            self.graphs[key] = graph
+             
+        # stash für direkten Zugriff im Append
+        if not hasattr(self, "graphs"):
+            self.graphs: Dict[str, Any] = {}
+
+        for key in self._tile_keys_int + self._tile_keys_ext:
+            tile  = self.dashboard.ids.get(key)
+            if not tile:
+                print(f"⚠️ Tile nicht gefunden: {key}")
+                continue
+
+            graph = getattr(tile.ids, "g", None)
+            if graph is None:
+                print(f"⚠️ Kein Graph in {key}")
+                continue
+
+            # 1) Hintergrund nur über Canvas (kein Widget anfassen)
+            bg_path = bg_map.get(key) or default_bg
+            if os.path.exists(bg_path):
+                self._apply_tile_bg(tile, bg_path)
+                print(f"🖼️ {key}: BG aktiv → {os.path.basename(bg_path)}")
+
+            # 2) Graph optisch ruhigstellen & vollflächig machen
+            try:
+                graph.draw_ticks = False
+                graph.draw_labels = False
+                graph.draw_border = False
+                graph.tick_color = (0, 0, 0, 0)
+                graph.background_color = (0, 0, 0, 0)
+                graph.size_hint = (1, 1)
+                graph.pos_hint = {"x": 0, "y": 0}
+            except Exception:
+                pass
+
+            # 3) Plot anlegen, wenn nicht vorhanden
+            if key not in self.plots:
+                accent = getattr(tile, "accent", (0.7, 1.0, 0.7))
+                plot = LinePlot(color=(*accent, 1), line_width=3.0)
+                graph.add_plot(plot)
+                self.plots[key] = plot
+                self.buffers[key] = []
+
+            # 4) Grundachsen
+            graph.ymin, graph.ymax = 0, 1
+            graph.xmin, graph.xmax = 0, max(1, self.chart_window)
+
+            # 5) Sync Graph auf Tile-Größe (ohne Reparent)
+            def _sync_graph(*_):
+                graph.size = tile.size
+                graph.pos  = tile.pos
+            tile.bind(size=_sync_graph, pos=_sync_graph)
+            Clock.schedule_once(_sync_graph, 0)
+
+            # 6) Merker
+            self.graphs[key] = graph
 
     # ------------------------------
-    # Android-Bridge (robust)
+    # Android-Bridge
     # ------------------------------
     def _ensure_bridge_started(self) -> None:
         if platform != "android" or self._bridge_started:
@@ -218,7 +319,7 @@ class ChartManager:
             print(f"🚀 Bridge.start → {ret}")
 
             try:
-                BleBridgePersistent.setActiveMac(dev if dev else None)  # Vollscan, wenn None
+                BleBridgePersistent.setActiveMac(dev if dev else None)
                 print(f"🎯 Aktive MAC: {dev or 'Vollscan'}")
             except Exception as e:
                 print("⚠️ setActiveMac fehlgeschlagen:", e)
@@ -231,7 +332,6 @@ class ChartManager:
     # Polling lifecycle + UI-Buttons
     # ------------------------------
     def start_polling(self) -> None:
-        """(Re)Start des Poll-Loops (nicht idempotent bzgl. _poll_event)."""
         if self._poll_event:
             Clock.unschedule(self._poll_event)
         self.running = True
@@ -239,7 +339,6 @@ class ChartManager:
         print(f"▶️ Starte Polling ({self.refresh_interval}s)")
 
     def stop_polling(self) -> None:
-        """Internes Stoppen (nur von Auto-Stop oder Watchdog genutzt)."""
         if self._poll_event:
             Clock.unschedule(self._poll_event)
             self._poll_event = None
@@ -247,29 +346,25 @@ class ChartManager:
         print("⏹ Polling gestoppt.")
 
     def user_stop(self) -> None:
-        """Manuell pausieren (Button). Charts bleiben sichtbar."""
         self._user_paused = True
         self._stale_logged = True
         self._last_pkt_at_stop = None
-        self.stop_polling()  # nur Poll stoppen
-        # Recovery-Timer darf weiterlaufen (kein Auto-Neustart, aber Monitoring)
+        self.stop_polling()
         print("⏸️ Manuell pausiert – Charts bleiben sichtbar.")
 
     def user_start(self) -> None:
-        """Manuell fortsetzen (Button)."""
         self._user_paused = False
         self._stale_logged = False
-        self._ensure_recovery_timer()   # Timer wieder aktivieren
+        self._ensure_recovery_timer()
         self.start_polling()
         print("▶️ Manuell fortgesetzt.")
 
-    
     # ------------------------------
-    # Recovery-Timer-Verwaltung
+    # Recovery-Timer
     # ------------------------------
     def _ensure_recovery_timer(self) -> None:
         if self._recovery_event is None:
-            self._recovery_event = Clock.schedule_interval(self._check_recovery, 1.5)  # etwas schneller
+            self._recovery_event = Clock.schedule_interval(self._check_recovery, 1.5)
 
     def _cancel_recovery_timer(self) -> None:
         if self._recovery_event:
@@ -285,9 +380,8 @@ class ChartManager:
             dash = app.sm.get_screen("dashboard").children[0]
             header = dash.ids.header
         except Exception:
-            return  # Header nicht erreichbar
+            return
 
-        # MAC
         mac = d.get("address") or d.get("mac") or self.cfg.get("device_id") or "--"
         if mac and mac != self._header_cache.get("mac"):
             try:
@@ -298,7 +392,6 @@ class ChartManager:
                 header.ids.device_label.text = mac
             self._header_cache["mac"] = mac
 
-        # RSSI
         rssi = d.get("rssi")
         if isinstance(rssi, (int, float)):
             self._header_cache["rssi"] = rssi
@@ -318,7 +411,6 @@ class ChartManager:
         except Exception:
             pass
 
-        # Optional global state
         try:
             app.current_mac = mac
             app.last_rssi = self._header_cache["rssi"]
@@ -331,10 +423,9 @@ class ChartManager:
     # ------------------------------
     @staticmethod
     def _pkt_changed(new_val: Optional[int], ref_val: Optional[int]) -> bool:
-        """True, sobald sich der Counter überhaupt verändert hat (Reset, Wrap, Anstieg)."""
         if new_val is None or ref_val is None:
             return False
-        return new_val != ref_val  # KEIN '>' – 129→1/Wrap ok
+        return new_val != ref_val
 
     # ------------------------------
     # Haupt-Poll (mit Auto-Cleanup)
@@ -346,7 +437,6 @@ class ChartManager:
             device_id = (getattr(config, "load_device_id", lambda: None)() or
                          self.cfg.get("device_id"))
 
-            # Datei lesen
             if not os.path.exists(APP_JSON):
                 self._set_no_data_labels()
                 return
@@ -364,7 +454,6 @@ class ChartManager:
                 self._set_no_data_labels()
                 return
 
-            # Device-Fokus
             if device_id:
                 data = [d for d in data if (d.get("address") or d.get("mac")) == device_id]
                 if not data:
@@ -374,9 +463,7 @@ class ChartManager:
             d = data[0]
             self._update_header(d)
 
-            # ------------------------------------------------------
-            # Bridge meldet „alive“ explizit?
-            # ------------------------------------------------------
+            # alive=false → Freeze + optional Auto-Stop
             alive_flag = d.get("alive")
             if alive_flag is False:
                 self._set_no_data_labels()
@@ -388,8 +475,6 @@ class ChartManager:
                         self._last_pkt_at_stop = self._last_pkt_seen
                     self.stop_polling()
                     print("⏹ Polling auto-gestoppt (Bridge alive=false). Warte auf Counter-Änderung…")
-
-                # 🌿 JSON immer löschen – egal ob Android oder Desktop
                 try:
                     if os.path.exists(APP_JSON):
                         os.remove(APP_JSON)
@@ -398,9 +483,7 @@ class ChartManager:
                     print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                 return
 
-            # ------------------------------------------------------
-            # Watchdog (Counter-Logik)
-            # ------------------------------------------------------
+            # Watchdog
             pkt = d.get("packet_counter") or d.get("pkt") or d.get("counter")
             try:
                 pkt_val = int(pkt) if pkt is not None else None
@@ -427,8 +510,6 @@ class ChartManager:
                         self._last_pkt_at_stop = self._last_pkt_seen
                         self.stop_polling()
                         print("⏹ Polling auto-gestoppt (Stille). Warte auf Counter-Änderung…")
-
-                    # 🌿 JSON löschen bei Timeout
                     try:
                         if os.path.exists(APP_JSON):
                             os.remove(APP_JSON)
@@ -437,7 +518,6 @@ class ChartManager:
                         print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                     return
             else:
-                # Kein Counter → wie Stille behandeln
                 if stale_for >= dyn_timeout:
                     if not self._stale_logged:
                         print(f"⚠️ Keine neuen Pakete seit {stale_for:.1f}s (kein counter)")
@@ -447,8 +527,6 @@ class ChartManager:
                         self._last_pkt_at_stop = self._last_pkt_seen if (self._last_pkt_seen is not None) else -1
                         self.stop_polling()
                         print("⏹ Polling auto-gestoppt (kein counter).")
-
-                    # 🌿 JSON löschen bei Counterfehler
                     try:
                         if os.path.exists(APP_JSON):
                             os.remove(APP_JSON)
@@ -457,9 +535,7 @@ class ChartManager:
                         print(f"⚠️ JSON-Löschung fehlgeschlagen: {e}")
                     return
 
-            # ------------------------------------------------------
-            # Werte extrahieren & anzeigen
-            # ------------------------------------------------------
+            # Werte
             t_int_c = d.get("temperature_int", 0.0)
             t_ext_c = d.get("temperature_ext", 0.0)
             h_int   = d.get("humidity_int", 0.0)
@@ -481,7 +557,7 @@ class ChartManager:
             from utils import convert_temperature
             t_int_disp = convert_temperature(t_int_c, "F") if is_f else t_int_c
             t_ext_disp = convert_temperature(t_ext_c, "F") if is_f else t_ext_c
-            # Charts + Labels aktualisieren
+
             values = {
                 "tile_t_in":   t_int_disp,
                 "tile_h_in":   h_int,
@@ -490,15 +566,31 @@ class ChartManager:
                 "tile_h_out":  h_ext,
                 "tile_vpd_out": vpd_out,
             }
+
+            # UI-Update – weakproxy-safe
             for key, val in values.items():
                 self._append_value(key, val)
-                tile = self.dashboard.ids.get(key)
-                if tile:
-                    unit = get_unit_for_key(key)
-                    tile.ids.big.text = f"{val:.2f} {unit}" if unit else f"{val:.2f}"
-                    self._auto_scale_y(tile.ids.g, key)
 
-            # Scatter, falls offen
+                tile = self.dashboard.ids.get(key)
+                if not tile:
+                    continue
+                big  = self._safe_ids(tile, "big")
+                graph = self._safe_ids(tile, "g")
+                if graph is None:
+                    continue
+
+                try:
+                    unit = get_unit_for_key(key)
+                    if big:
+                        big.text = f"{val:.2f} {unit}" if unit else f"{val:.2f}"
+                    self._auto_scale_y(graph, key)
+                except ReferenceError:
+                    # Layout wurde rekonstruiert; nächster Poll repariert es automatisch
+                    continue
+                except Exception:
+                    continue
+
+            # Scatter update (optional)
             try:
                 app = App.get_running_app()
                 if getattr(app, "scatter_window", None):
@@ -512,7 +604,7 @@ class ChartManager:
             self._set_no_data_labels()
 
     # ------------------------------
-    # Auto-Recovery (nur wenn auto-gestoppt & nicht user-paused)
+    # Recovery
     # ------------------------------
     def _check_recovery(self, *_):
         if self.running or self._user_paused:
@@ -529,10 +621,8 @@ class ChartManager:
                 return
 
             d = data[0]
-            # a) Explizites Bridge-Alive?
             alive_flag = d.get("alive")
 
-            # b) Counter-Änderung (egal ob größer/kleiner/reset/wrap)
             pkt = d.get("packet_counter") or d.get("pkt") or d.get("counter")
             try:
                 pkt_val = int(pkt) if pkt is not None else None
@@ -577,7 +667,6 @@ class ChartManager:
         if not grid:
             return
 
-        # 🧯 Kurz Polling pausieren, um FBO-Fehler zu vermeiden
         was_running = bool(getattr(self, "running", False))
         if was_running:
             try:
@@ -593,81 +682,87 @@ class ChartManager:
         self._toggle_external_tiles(ext_visible)
         Clock.schedule_once(lambda dt: grid.do_layout(), 0.4)
 
-        # 🕐 Polling nach Ende der Animation wieder aktivieren
         if was_running:
             Clock.schedule_once(lambda dt: self.start_polling(), 0.6)
+
+    # Nach Layoutwechsel komplette Tile-Canvas refreshen
+        def _refresh_all(*_):
+            for key in self._tile_keys_int + self._tile_keys_ext:
+                tile = self.dashboard.ids.get(key)
+                if not tile:
+                    continue
+                wrapper = next((w for w in tile.children if isinstance(w, FloatLayout)), None)
+                graph = tile.ids.get("g") if hasattr(tile, "ids") else None
+                if graph and wrapper:
+                    graph.size = wrapper.size
+                    graph.pos = wrapper.pos
+        Clock.schedule_once(_refresh_all, 0.2)
+    # ------------------------------
+    # Helper: Basis-Höhe sicherstellen
+    # ------------------------------
+    def _ensure_base_height(self, tile):
+        """Guarantees a sane base_height for animations/layout."""
+        if not hasattr(tile, "base_height") or not getattr(tile, "base_height", 0):
+            tile.base_height = tile.height if tile.height > 0 else dp(160)
 
     # ------------------------------
     # Sichtbarkeit externer Tiles anpassen
     # ------------------------------
     def _toggle_external_tiles(self, visible: bool) -> None:
-        # externe Tiles
         for key in self._tile_keys_ext:
             tile = self.dashboard.ids.get(key)
             if not tile:
                 continue
+            self._ensure_base_height(tile)
             Animation.cancel_all(tile)
             if visible:
                 tile.disabled = False
-                anim = Animation(opacity=1.0, height=tile.base_height, d=0.35)
+                Animation(opacity=1.0, height=tile.base_height, d=0.35).start(tile)
             else:
                 tile.disabled = True
-                anim = Animation(opacity=0.0, height=0, d=0.35)
-            anim.start(tile)
+                Animation(opacity=0.0, height=0, d=0.35).start(tile)
 
-        # interne Tiles leicht „atmen“
         for key in self._tile_keys_int:
             tile = self.dashboard.ids.get(key)
             if not tile:
                 continue
+            self._ensure_base_height(tile)
             Animation.cancel_all(tile)
             h = tile.height if tile.height > 0 else tile.base_height
             Animation(height=h + dp(1), d=0.05).start(tile)
             Clock.schedule_once(lambda *_t, t=tile: setattr(t, "height", t.base_height), 0.08)
+
     # ------------------------------
     # Helpers
     # ------------------------------
     def _append_value(self, key: str, val: float) -> None:
         buf = self.buffers.setdefault(key, [])
         self.counter += 1
-        buf.append((self.counter, val))
+        buf.append((self.counter, float(val)))
+
+        # begrenzen (inplace)
         if len(buf) > self.chart_window:
-            buf.pop(0)
+            del buf[:-self.chart_window]
+
         plot = self.plots.get(key)
         if plot:
-            plot.points = buf
+            # neue Liste zuweisen → GPU-Leak-Fix
+            plot.points = buf[:]
 
-    def _auto_scale_y(self, graph, key: str) -> None:
-        try:
-            vals = [v for _, v in self.buffers.get(key, []) if isinstance(v, (int, float))]
-            if not vals:
-                return
-            y_min, y_max = min(vals), max(vals)
-            if abs(y_max - y_min) < 1e-6:
-                y_min, y_max = y_min - 0.5, y_max + 0.5
-            margin = max((y_max - y_min) * 0.2, 0.2)
-            graph.ymin = round(y_min - margin, 1)
-            graph.ymax = round(y_max + margin, 1)
-            if self.counter >= self.chart_window:
-                graph.xmin = self.counter - self.chart_window
-                graph.xmax = self.counter
-            else:
-                graph.xmin = 0
-                graph.xmax = self.chart_window
-        except Exception as e:
-            print(f"⚠️ Auto-Scale-Fehler ({key}):", e)
+        # Fenster gleiten lassen, unabhängig von counter-Start
+        graph = getattr(self, "graphs", {}).get(key)
+        if graph:
+            n = len(buf)
+            if n >= 2:
+                x_max = buf[-1][0]
+                x_min = x_max - (self.chart_window - 1)
+                if x_min < 0:
+                    x_min = 0
+                graph.xmin = x_min
+                graph.xmax = max(graph.xmin + 1, x_max)
 
-    def _set_no_data_labels(self) -> None:
-        # Text leeren
-        for key in ["tile_t_in", "tile_h_in", "tile_vpd_in",
-                    "tile_t_out", "tile_h_out", "tile_vpd_out"]:
-            tile = self.dashboard.ids.get(key)
-            if tile:
-                tile.ids.big.text = "--"
-        # Linien leeren (optischer Freeze)
-        for p in self.plots.values():
-            p.points = []
-
+            # Y automatisch skalieren
+            self._auto_scale_y(graph, key)
     # ------------------------------
     # Reset & Config-Reload
     # ------------------------------
@@ -675,11 +770,16 @@ class ChartManager:
         for buf in self.buffers.values():
             buf.clear()
         for p in self.plots.values():
-            p.points = []
+            try:
+                p.points = []
+            except ReferenceError:
+                pass
         for key in ["tile_t_in","tile_h_in","tile_vpd_in","tile_t_out","tile_h_out","tile_vpd_out"]:
             tile = self.dashboard.ids.get(key)
-            if tile and hasattr(tile, "ids") and "big" in tile.ids:
-                tile.ids.big.text = "--"
+            if not tile:
+                continue
+            big = self._safe_ids(tile, "big")
+            self._safe_set_text(big, "--")
         self.counter = 0
         print("🧹 Charts & Werte zurückgesetzt")
 
@@ -694,3 +794,58 @@ class ChartManager:
               f"Timeout={self._effective_timeout():.1f}s, AutoStop={self.allow_auto_stop}")
         if self.running:
             self.start_polling()
+
+    # ------------------------------
+    # Auto-Scaling Y-Achse
+    # ------------------------------
+    def _auto_scale_y(self, graph, key: str) -> None:
+        try:
+            vals = [v for _, v in self.buffers.get(key, []) if isinstance(v, (int, float))]
+            if not vals:
+                return
+            y_min, y_max = min(vals), max(vals)
+
+            # Falls alle Werte gleich → minimaler Bereich
+            if abs(y_max - y_min) < 1e-6:
+                y_min, y_max = y_min - 0.5, y_max + 0.5
+
+            # 20 % Sicherheitsabstand oben/unten
+            margin = max((y_max - y_min) * 0.2, 0.2)
+            graph.ymin = round(y_min - margin, 1)
+            graph.ymax = round(y_max + margin, 1)
+
+            # X-Achse gleitend halten
+            if self.counter >= self.chart_window:
+                graph.xmin = self.counter - self.chart_window
+                graph.xmax = self.counter
+            else:
+                graph.xmin = 0
+                graph.xmax = self.chart_window
+        except Exception as e:
+            print(f"⚠️ Auto-Scale-Fehler ({key}): {e}")
+
+    # ------------------------------
+    # Kein-Daten-Labels (Fallback)
+    # ------------------------------
+    def _set_no_data_labels(self) -> None:
+        keys = [
+            "tile_t_in", "tile_h_in", "tile_vpd_in",
+            "tile_t_out", "tile_h_out", "tile_vpd_out"
+        ]
+        for key in keys:
+            tile = self.dashboard.ids.get(key)
+            if not tile:
+                continue
+            big = getattr(tile.ids, "big", None)
+            if big:
+                try:
+                    big.text = "--"
+                except Exception:
+                    pass
+
+        for plot in self.plots.values():
+            try:
+                plot.points = []
+            except Exception:
+                pass
+            
