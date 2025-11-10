@@ -71,7 +71,7 @@ KV = f"""
         # ---- Titel links ----
         Label:
             markup: True
-            text: "[font=FA]\\uf013[/font]  Thermo Dashboard v3.6"
+            text: "[font=FA]\\uf06d[/font]  Thermo Dashboard v3.6"
             bold: True
             font_size: "13sp"
             color: 0.90, 1, 0.92, 1
@@ -148,13 +148,13 @@ KV = f"""
     BoxLayout:
         orientation: "horizontal"
         size_hint_y: None
-        height: {dp_scaled(22)}
-        spacing: {dp_scaled(6)}
+        height: {dp_scaled(32)}
+        spacing: {dp_scaled(8)}
 
         Label:
             text: root.title
             markup: True
-            font_size: "{sp_scaled(14)}"
+            font_size: "{sp_scaled(17)}"
             color: 0.8, 1, 0.85, 1
             halign: "left"
             size_hint_x: 0.6
@@ -162,7 +162,7 @@ KV = f"""
         Label:
             id: big
             text: root.value_text
-            font_size: "{sp_scaled(16)}"
+            font_size: "{sp_scaled(22)}"
             color: 1, 1, 1, 1
             bold: True
             halign: "right"

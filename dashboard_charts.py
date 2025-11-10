@@ -225,7 +225,7 @@ class ChartManager:
             # Plot initialisieren (nur einmal)
             if key not in self.plots:
                 accent = getattr(tile, "accent", (0.7, 1.0, 0.7))
-                plot = LinePlot(color=(*accent, 1), line_width=3.0)
+                plot = LinePlot(color=(*accent, 1), line_width=5.0)
                 graph.add_plot(plot)
                 self.plots[key] = plot
                 self.buffers[key] = []
@@ -281,7 +281,7 @@ class ChartManager:
             # 3) Plot anlegen, wenn nicht vorhanden
             if key not in self.plots:
                 accent = getattr(tile, "accent", (0.7, 1.0, 0.7))
-                plot = LinePlot(color=(*accent, 1), line_width=3.0)
+                plot = LinePlot(color=(*accent, 1), line_width=5.0)
                 graph.add_plot(plot)
                 self.plots[key] = plot
                 self.buffers[key] = []
