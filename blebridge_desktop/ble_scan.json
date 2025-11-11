@@ -1,21 +1,6 @@
 [
   {
-    "timestamp": "2025-11-10T22:37:46.724+0000",
-    "name": "ThermoBeacon2",
-    "address": "18F528DA-0A79-1D73-E266-3018DD2F1E83",
-    "rssi": -41,
-    "type": "sensor",
-    "temperature_int": 22.94,
-    "humidity_int": 37.31,
-    "temperature_ext": 22.88,
-    "humidity_ext": 38.0,
-    "packet_counter": 98,
-    "ext_present": true,
-    "alive": true,
-    "status": "active"
-  },
-  {
-    "timestamp": "2025-11-10T22:37:53.031+0000",
+    "timestamp": "2025-11-11T00:12:53.634+0000",
     "name": "NK-RADIOCAR(APP)",
     "address": "7D4ECDF3-0046-86AC-734E-1C9D6B6EAAEC",
     "rssi": -92,
@@ -26,6 +11,21 @@
     "humidity_ext": -99.0,
     "packet_counter": 0,
     "ext_present": false,
+    "alive": false,
+    "status": "stale"
+  },
+  {
+    "timestamp": "2025-11-11T00:12:58.733+0000",
+    "name": "ThermoBeacon2",
+    "address": "18F528DA-0A79-1D73-E266-3018DD2F1E83",
+    "rssi": -44,
+    "type": "sensor",
+    "temperature_int": 22.56,
+    "humidity_int": 37.0,
+    "temperature_ext": 19.69,
+    "humidity_ext": 42.62,
+    "packet_counter": 179,
+    "ext_present": true,
     "alive": true,
     "status": "active"
   }

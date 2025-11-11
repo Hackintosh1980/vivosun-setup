@@ -17,6 +17,7 @@ from kivy.clock import Clock
 from kivy.uix.boxlayout import BoxLayout
 from kivy.graphics import Color, Ellipse
 from kivy.clock import Clock
+from kivy.core.window import Window
 import config
 
 
@@ -34,7 +35,19 @@ def sp_scaled(v):
 def dp_scaled(v): 
     return dp(v * UI_SCALE)
 
+# -------------------------------------------------------
+# 💻 Desktop-Startgröße setzen
+# -------------------------------------------------------
 
+if platform not in ("android", "ios"):
+    try:
+        Window.size = (1400, 800)      # Breite, Höhe
+        Window.minimum_width = 900
+        Window.minimum_height = 600
+        Window.title = "VIVOSUN Ultimate Dashboard 🌿"
+        print(f"🖥️ Desktop window initialized: {Window.size}")
+    except Exception as e:
+        print(f"⚠️ Window init failed: {e}")
 # -------------------------------------------------------
 # 🌱 Font Setup
 # -------------------------------------------------------
@@ -54,9 +67,9 @@ else:
 KV = f"""
 <Header>:
     size_hint_y: None
-    height: dp(38)
-    padding: [dp(12), dp(8), dp(12), dp(8)]
-    spacing: dp(10)
+    height: dp(46)   # etwas höher für größere Schrift
+    padding: [dp(14), dp(8), dp(14), dp(8)]
+    spacing: dp(12)
     canvas.before:
         Color:
             rgba: 0.05, 0.08, 0.06, 1
@@ -66,19 +79,19 @@ KV = f"""
 
     BoxLayout:
         orientation: "horizontal"
-        spacing: dp(10)
+        spacing: dp(12)
 
         # ---- Titel links ----
         Label:
             markup: True
-            text: "[font=FA]\\uf06d[/font]  Thermo Dashboard v3.6"
+            text: "[font=FA]\\uf06d[/font]  Ultimate Thermo Dashboard v3.6"
             bold: True
-            font_size: "13sp"
+            font_size: "15sp"
             color: 0.90, 1, 0.92, 1
             halign: "left"
             valign: "middle"
             size_hint_x: None
-            width: dp(220)
+            width: dp(260)
             text_size: self.size
             shorten: False
 
@@ -89,10 +102,10 @@ KV = f"""
             id: device_label
             markup: True
             text: "[font=FA]\\uf294[/font] --"
-            font_size: "12sp"
+            font_size: "14sp"
             color: 0.7, 0.95, 1.0, 1
             size_hint_x: None
-            width: dp(180)
+            width: dp(190)
             halign: "right"
             valign: "middle"
             text_size: self.size
@@ -102,32 +115,33 @@ KV = f"""
             id: rssi_box
             orientation: "horizontal"
             size_hint_x: None
-            width: dp(110)
-            spacing: dp(5)
+            width: dp(120)
+            spacing: dp(6)
             Label:
                 id: rssi_icon
                 markup: True
                 text: "[font=FA]\\uf012[/font]"
-                font_size: "12sp"
+                font_size: "13sp"
                 color: 0.6, 0.9, 0.6, 1
                 size_hint_x: None
-                width: dp(14)
+                width: dp(16)
             Label:
                 id: rssi_value
                 text: "-- dBm"
-                font_size: "11sp"
+                font_size: "13sp"
                 color: 0.7, 1.0, 0.8, 1
             Widget:
                 id: bt_led_placeholder
                 size_hint_x: None
-                width: dp(20)
+                width: dp(22)
+
         # ---- Uhrzeit ----
         Label:
             id: clocklbl
             text: "00:00:00"
             size_hint_x: None
-            width: dp(80)
-            font_size: "12sp"
+            width: dp(90)
+            font_size: "14sp"
             color: 0.8, 1.0, 0.85, 1
             halign: "right"
             valign: "middle"
@@ -290,33 +304,142 @@ Dashboard:
 # -------------------------------------------------------
 # 🔵 Kleine Status-LED für BT / Polling
 # -------------------------------------------------------
+from kivy.uix.boxlayout import BoxLayout
+from kivy.metrics import dp
+from kivy.clock import Clock
+from kivy.graphics import Color, Ellipse
+from kivy.properties import NumericProperty
+from kivy.animation import Animation
+
+
 class BtLedWidget(BoxLayout):
-    """Echte Bluetooth/Polling-Status-LED für Dashboard Header"""
+    """Bluetooth/Polling-LED mit 3 Zuständen und sanftem Fading"""
+    a = NumericProperty(1.0)  # Alpha zum Faden
+    _fade_anim = None
+    _pulse_anim = None
+
     def __init__(self, chart_mgr=None, **kwargs):
         super().__init__(orientation="vertical", size_hint_x=None, width=dp(20), **kwargs)
         self.chart_mgr = chart_mgr
-        self._state = "off"  # off / on
+        self._state = "off"
+
         with self.canvas:
-            self._color = Color(0.4, 0.1, 0.1, 1)  # dunkelrot: inaktiv
+            self._color = Color(0.4, 0.1, 0.1, 1)  # rot-braun initial
             self._circle = Ellipse(size=(dp(14), dp(14)))
+
         self.bind(pos=self._update_pos, size=self._update_pos)
         Clock.schedule_interval(self._update_led, 0.8)
+        self.bind(a=self._apply_alpha)
 
     def _update_pos(self, *_):
-        self._circle.pos = (self.x + dp(3), self.y + (self.height - dp(14)) / 2)
+        self._circle.pos = (
+            self.x + dp(3),
+            self.y + (self.height - dp(14)) / 2
+        )
 
+    # ----------------------------------------------------
+    # Farbwechsel mit Fading
+    # ----------------------------------------------------
+    def _fade_to(self, rgba, duration=0.4):
+        """Animiert sanft von aktueller Farbe zu neuer Farbe"""
+        if self._fade_anim:
+            self._fade_anim.cancel(self)
+        old = list(self._color.rgba)
+        target = rgba
+
+        def _step(animation, widget, progress):
+            new_col = [old[i] + (target[i] - old[i]) * progress for i in range(4)]
+            self._color.rgba = new_col
+
+        self._fade_anim = Animation(a=1.0, d=duration)
+        self._fade_anim.bind(on_progress=_step)
+        self._fade_anim.start(self)
+
+    # ----------------------------------------------------
+    # LED-Logik (stabil – Originalzustand)
+    # ----------------------------------------------------
     def _update_led(self, *_):
         mgr = self.chart_mgr
-        active = bool(getattr(mgr, "running", False))
-        # Wenn kein ChartManager existiert oder nie gestartet: LED bleibt rot/dunkel
-        if not mgr or not active:
+        if not mgr:
+            return
+
+        running = bool(getattr(mgr, "running", False))
+        paused  = bool(getattr(mgr, "_user_paused", False))
+
+        # Prüfen, ob Puffer gefüllt ist
+        has_data = False
+        try:
+            if hasattr(mgr, "buffers"):
+                for buf in mgr.buffers.values():
+                    if buf and len(buf) > 0:
+                        has_data = True
+                        break
+        except Exception:
+            has_data = False
+
+        # Prüfen, ob JSON existiert und gültig ist
+        json_ok = False
+        try:
+            from dashboard_charts import APP_JSON
+            if os.path.exists(APP_JSON):
+                with open(APP_JSON, "r") as f:
+                    content = f.read().strip()
+                if content:
+                    json_ok = True
+        except Exception:
+            json_ok = False
+
+        # 🔴 AUS (Poller gestoppt)
+        if not running:
             if self._state != "off":
-                self._color.rgba = (0.4, 0.1, 0.1, 1)
+                self._fade_to((0.4, 0.1, 0.1, 1))
+                self._stop_pulse()
                 self._state = "off"
-        else:
+            return
+
+        # 🟡 PAUSIERT
+        if paused:
+            if self._state != "paused":
+                self._fade_to((1.0, 0.9, 0.1, 1))
+                self._stop_pulse()
+                self._state = "paused"
+            return
+
+        # 🔵 SUCHMODUS – aktiv, aber keine Daten & keine gültige JSON
+        if running and not paused and (not has_data or not json_ok):
+            if self._state != "search":
+                self._fade_to((0.2, 0.45, 1.0, 1))
+                self._start_pulse()
+                self._state = "search"
+            return
+
+        # 🟢 AKTIV (Datenfluss erkannt)
+        if running and not paused and has_data and json_ok:
             if self._state != "on":
-                self._color.rgba = (0.0, 1.0, 0.0, 1)
+                self._fade_to((0.0, 1.0, 0.0, 1))
+                self._start_pulse()
                 self._state = "on"
+
+    # ----------------------------------------------------
+    # Pulsanimation (Atmen)
+    # ----------------------------------------------------
+    def _start_pulse(self):
+        self._stop_pulse()
+        self._pulse_anim = Animation(a=0.55, d=0.9, t="in_out_quad") + \
+                           Animation(a=1.0, d=0.9, t="in_out_quad")
+        self._pulse_anim.repeat = True
+        self._pulse_anim.start(self)
+
+    def _stop_pulse(self):
+        if self._pulse_anim:
+            self._pulse_anim.cancel(self)
+            self._pulse_anim = None
+        self.a = 1.0
+
+    def _apply_alpha(self, *_):
+        """Alpha auf die aktuelle LED-Farbe anwenden."""
+        r, g, b, _ = self._color.rgba
+        self._color.rgba = (r, g, b, self.a)
 # -------------------------------------------------------
 # Widgets
 # -------------------------------------------------------

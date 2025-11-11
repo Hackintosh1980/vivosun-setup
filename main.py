@@ -187,27 +187,66 @@ class VivosunApp(App):
     
 
     # ---------------------------------------------------
-    # Permissions-Popup
+    # Permissions-Popup (auto-dismiss everywhere)
     # ---------------------------------------------------
     def _show_permission_hint_safe(self, *_):
         try:
             if check_permissions():
                 print("✅ Permissions OK")
                 return
+
+            from kivy.uix.boxlayout import BoxLayout
+            from kivy.uix.label import Label
+
+            box = BoxLayout(orientation="vertical", spacing=18, padding=[20, 20, 20, 20])
+
+            # ⚠️ Icon + Text
+            icon_lbl = Label(
+                text="[font=FA]\uf071[/font]",
+                markup=True,
+                font_name="FA",
+                font_size="52sp",
+                color=(1, 0.85, 0.3, 1),
+                size_hint_y=None,
+                height="68dp"
+            )
+
             msg = (
-                "⚠️ Bluetooth- oder Standortrechte fehlen.\n\n"
-                "Öffne Android → Einstellungen → App-Berechtigungen → "
-                "Bluetooth & Standort aktivieren.\n\n"
+                "[b][color=#ffdd66]Bluetooth / Standort Berechtigung fehlt[/color][/b]\n\n"
+                "Bitte öffne:\n"
+                "[i]Android → Einstellungen → App-Berechtigungen[/i]\n"
+                "und aktiviere [b]Bluetooth[/b] & [b]Standort[/b].\n\n"
                 "Danach App neu starten."
             )
-            lbl = Label(text=msg, halign="center", valign="middle", text_size=(380, None))
-            Popup(
-                title="Berechtigungen erforderlich",
-                content=lbl,
-                size_hint=(0.9, 0.55),
-                auto_dismiss=True,
-            ).open()
-            print("⚠️ Berechtigungs-Popup angezeigt")
+
+            text_lbl = Label(
+                text=msg,
+                markup=True,
+                halign="center",
+                valign="middle",
+                color=(0.9, 1, 0.9, 1),
+                text_size=(380, None)
+            )
+
+            box.add_widget(icon_lbl)
+            box.add_widget(text_lbl)
+
+            # 🌿 Popup-Design
+            popup = Popup(
+                title="[b]Berechtigungen erforderlich[/b]",
+                title_align="center",
+                title_size="20sp",
+                title_color=(0.9, 1, 0.9, 1),
+                separator_color=(0.3, 0.6, 0.3, 1),
+                content=box,
+                size_hint=(0.88, 0.55),
+                background="atlas://data/images/defaulttheme/button_pressed",
+                background_color=(0.05, 0.1, 0.05, 0.95),
+                auto_dismiss=True,   # 💚 Klick irgendwo → Popup schließt sich
+            )
+
+            popup.open()
+            print("⚠️ Permissions-Popup angezeigt (auto-dismiss)")
         except Exception as e:
             print(f"⚠️ Popup-Fehler: {e}")
 
