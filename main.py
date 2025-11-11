@@ -133,15 +133,22 @@ class VivosunApp(App):
         except Exception:
             pass
 
+    # ---------------------------------------------------
+    # Header-Update: BT-Icon, MAC-Adresse, RSSI + Auto-Start
+    # ---------------------------------------------------
     def _safe_update_header(self, *_):
         """Aktualisiert Device-Icon/MAC im Header (BT + MAC + RSSI)"""
         try:
             if not hasattr(self, "chart_mgr"):
                 return
+
+            # Dashboard + Header holen
             dash = self.sm.get_screen("dashboard").children[0]
             header = dash.ids.header
 
-            # MAC-Ermittlung
+            # ------------------------------------------------
+            # 🔍 MAC-Ermittlung
+            # ------------------------------------------------
             mac = getattr(self, "current_mac", None)
             if not mac and os.path.exists(APP_JSON):
                 try:
@@ -151,41 +158,55 @@ class VivosunApp(App):
                         mac = data[0].get("address") or data[0].get("mac")
                 except Exception:
                     mac = None
+
             mac = mac or config.load_config().get("device_id") or "--"
 
-            
+            # ------------------------------------------------
+            # 🔄 Bluetooth-Status
+            # ------------------------------------------------
             bridge_flag = bool(getattr(self.chart_mgr, "_bridge_started", False))
             active_flag = bool(getattr(self.chart_mgr, "running", True))
             self.bt_active = bridge_flag and active_flag
 
-            icon = "\uf294" if self.bt_active else "\uf293"
+            # FontAwesome Bluetooth Icons (richtige Notation!)
+            FA_BT_ON  = "\uf294"  # Bluetooth aktiv
+            FA_BT_OFF = "\uf293"  # Bluetooth inaktiv
+
+            icon = FA_BT_ON if self.bt_active else FA_BT_OFF
             color = (0.3, 1.0, 0.3, 1) if self.bt_active else (1.0, 0.4, 0.3, 1)
-            header.ids.device_label.text = f"[font=assets/fonts/fa-solid-900.ttf]{icon}[/font] {mac}"
+
+            header.ids.device_label.text = f"[font=FA]{icon}[/font] {mac}"
             header.ids.device_label.color = color
 
-            # RSSI optional
+            # ------------------------------------------------
+            # 📶 RSSI optional
+            # ------------------------------------------------
             if hasattr(header.ids, "rssi_value") and isinstance(self.last_rssi, (int, float)):
                 header.ids.rssi_value.text = f"{int(self.last_rssi)} dBm"
-        except Exception:
-            pass
-# --- Auto-Start bei Erstlauf (MAC sichtbar, aber noch kein Start) ---
+
+        except Exception as e:
+            print(f"⚠️ Header-Update-Fehler: {e}")
+        # ------------------------------------------------
+        # 🚀 Auto-Start bei Erstlauf (wenn keine config.json existiert)
+        # ------------------------------------------------
         try:
             cfg_path = os.path.join(os.getcwd(), "config.json")
             if mac not in ("--", None) and not os.path.exists(cfg_path):
                 cfg = {"device_id": mac, "unit": "°C", "autostart": True}
                 with open(cfg_path, "w") as f:
                     json.dump(cfg, f, indent=2)
+
                 self.current_mac = mac
+
                 if hasattr(self, "chart_mgr") and self.chart_mgr:
                     if hasattr(self.chart_mgr, "load_config"):
                         self.chart_mgr.load_config(cfg)
                     if hasattr(self.chart_mgr, "user_start"):
                         self.chart_mgr.user_start()
-                    print(f"🚀 Auto-Start ausgelöst für erstes Gerät: {mac}")
-        except Exception as e:
-            print("⚠️ Auto-Start im Header fehlgeschlagen:", e)
-    
 
+                print(f"🚀 Auto-Start ausgelöst für erstes Gerät: {mac}")
+        except Exception as e:
+            print(f"⚠️ Auto-Start im Header fehlgeschlagen: {e}")
     # ---------------------------------------------------
     # Permissions-Popup (auto-dismiss everywhere)
     # ---------------------------------------------------
@@ -197,20 +218,26 @@ class VivosunApp(App):
 
             from kivy.uix.boxlayout import BoxLayout
             from kivy.uix.label import Label
+            from kivy.uix.popup import Popup
 
-            box = BoxLayout(orientation="vertical", spacing=18, padding=[20, 20, 20, 20])
-
-            # ⚠️ Icon + Text
-            icon_lbl = Label(
-                text="[font=FA]\uf071[/font]",
-                markup=True,
-                font_name="FA",
-                font_size="52sp",
-                color=(1, 0.85, 0.3, 1),
-                size_hint_y=None,
-                height="68dp"
+            # 🌿 Container
+            box = BoxLayout(
+                orientation="vertical",
+                spacing=18,
+                padding=[20, 20, 20, 20]
             )
 
+            # ⚠️ Icon direkt über Fontname, kein Markup!
+            icon_lbl = Label(
+                text=chr(0xf071),          # Unicode für ⚠ FontAwesome
+                font_name="FA",
+                font_size="56sp",
+                color=(1, 0.85, 0.3, 1),
+                size_hint_y=None,
+                height="74dp"
+            )
+
+            # 📜 Text
             msg = (
                 "[b][color=#ffdd66]Bluetooth / Standort Berechtigung fehlt[/color][/b]\n\n"
                 "Bitte öffne:\n"
@@ -231,7 +258,7 @@ class VivosunApp(App):
             box.add_widget(icon_lbl)
             box.add_widget(text_lbl)
 
-            # 🌿 Popup-Design
+            # 💚 Popup
             popup = Popup(
                 title="[b]Berechtigungen erforderlich[/b]",
                 title_align="center",
@@ -242,14 +269,14 @@ class VivosunApp(App):
                 size_hint=(0.88, 0.55),
                 background="atlas://data/images/defaulttheme/button_pressed",
                 background_color=(0.05, 0.1, 0.05, 0.95),
-                auto_dismiss=True,   # 💚 Klick irgendwo → Popup schließt sich
+                auto_dismiss=True,  # Klick irgendwo -> schließt Popup
             )
 
             popup.open()
             print("⚠️ Permissions-Popup angezeigt (auto-dismiss)")
+
         except Exception as e:
             print(f"⚠️ Popup-Fehler: {e}")
-
     # ---------------------------------------------------
     # Navigation + Buttons
     # ---------------------------------------------------

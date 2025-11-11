@@ -29,8 +29,11 @@ from Foundation import NSObject, NSRunLoop, NSDate
 import CoreBluetooth as CB
 
 # ---------------- CONFIG ----------------
-OUT_DIR  = os.path.expanduser("~/vivosun-setup/blebridge_desktop")
+# Ausgabe immer relativ zum Projektordner
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR  = os.path.join(BASE_DIR, "blebridge_desktop")
 OUT_FILE = os.path.join(OUT_DIR, "ble_scan.json")
+
 WRITE_INTERVAL = 1.5           # Sekunden
 TIMEOUT_MS     = 15000         # 15 s → stale
 CID_0019       = 0x0019        # ThermoBeacon/VSCTLE Company ID

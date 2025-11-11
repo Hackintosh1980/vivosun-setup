@@ -67,9 +67,9 @@ else:
 KV = f"""
 <Header>:
     size_hint_y: None
-    height: dp(46)   # etwas höher für größere Schrift
+    height: dp(38)
     padding: [dp(14), dp(8), dp(14), dp(8)]
-    spacing: dp(12)
+    spacing: dp(14)
     canvas.before:
         Color:
             rgba: 0.05, 0.08, 0.06, 1
@@ -79,7 +79,7 @@ KV = f"""
 
     BoxLayout:
         orientation: "horizontal"
-        spacing: dp(12)
+        spacing: dp(10)
 
         # ---- Titel links ----
         Label:
@@ -90,32 +90,31 @@ KV = f"""
             color: 0.90, 1, 0.92, 1
             halign: "left"
             valign: "middle"
-            size_hint_x: None
-            width: dp(260)
+            size_hint_x: 0.45     # etwas mehr Flex als feste Breite
             text_size: self.size
             shorten: False
 
+        # ---- Dynamischer Zwischenraum ----
         Widget:
+            size_hint_x: 0.05
 
         # ---- Gerät + Bluetooth ----
         Label:
             id: device_label
             markup: True
-            text: "[font=FA]\\uf294[/font] --"
+            text: "[font=FA]\\uf6a9[/font] --"
             font_size: "14sp"
             color: 0.7, 0.95, 1.0, 1
-            size_hint_x: None
-            width: dp(190)
             halign: "right"
             valign: "middle"
             text_size: self.size
+            size_hint_x: 0.35     # vorher 0.25, jetzt mehr Platz für lange MACs
 
         # ---- RSSI + BT LED ----
         BoxLayout:
             id: rssi_box
             orientation: "horizontal"
-            size_hint_x: None
-            width: dp(120)
+            size_hint_x: 0.15     # etwas flexibler statt 110 dp
             spacing: dp(6)
             Label:
                 id: rssi_icon
@@ -124,12 +123,13 @@ KV = f"""
                 font_size: "13sp"
                 color: 0.6, 0.9, 0.6, 1
                 size_hint_x: None
-                width: dp(16)
+                width: dp(18)
             Label:
                 id: rssi_value
                 text: "-- dBm"
                 font_size: "13sp"
                 color: 0.7, 1.0, 0.8, 1
+                shorten: False
             Widget:
                 id: bt_led_placeholder
                 size_hint_x: None
@@ -139,12 +139,12 @@ KV = f"""
         Label:
             id: clocklbl
             text: "00:00:00"
-            size_hint_x: None
-            width: dp(90)
+            size_hint_x: 0.1
             font_size: "14sp"
             color: 0.8, 1.0, 0.85, 1
             halign: "right"
             valign: "middle"
+
 
 
 <Tile>:
